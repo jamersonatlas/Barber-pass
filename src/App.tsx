@@ -325,7 +325,7 @@ export default function App() {
           due: dueNum,
           obs: cObs.trim(),
           checklist: newChecklist,
-          username: cUsername.trim(),
+          username: cUsername.trim().toLowerCase(),
           password: cPassword.trim(),
           updatedAt: new Date().toISOString()
         });
@@ -354,7 +354,7 @@ export default function App() {
           lastPaid: todayDate(),
           checklist: newChecklist,
           ownerId: user.uid,
-          username: cUsername.trim(),
+          username: cUsername.trim().toLowerCase(),
           password: cPassword.trim(),
           createdAt: new Date().toISOString()
         });

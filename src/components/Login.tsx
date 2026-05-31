@@ -63,11 +63,17 @@ export default function Login({ onLoginSuccess, onLoginStart }: LoginProps) {
     if (onLoginStart) onLoginStart();
 
     try {
+      const normalizedUsername = username.trim().toLowerCase();
+
       if (activeTab === 'professional') {
         // 1. Check Super Admin hardcoded fallback credentials
-        if (username.trim() === 'admin' && password.trim() === 'admin123') {
-          // Log in as superadmin via an anonymous Firebase Auth session to secure db calls
-          await signInAnonymously(auth);
+        if (normalizedUsername === 'admin' && password.trim() === 'admin123') {
+          // Log in as superadmin via an anonymous Firebase Auth session to secure db calls if allowed
+          try {
+            await signInAnonymously(auth);
+          } catch (authErr) {
+            console.warn('Anonymous auth failed, continuing without active auth session:', authErr);
+          }
           onLoginSuccess({
             uid: 'admin_master',
             name: 'Administrador Master',
@@ -81,7 +87,7 @@ export default function Login({ onLoginSuccess, onLoginStart }: LoginProps) {
         // 2. Query 'barbers' collection
         const qBarber = query(
           collection(db, 'barbers'),
-          where('username', '==', username.trim()),
+          where('username', '==', normalizedUsername),
           where('password', '==', password.trim())
         );
         const snapshot = await getDocs(qBarber);
@@ -89,7 +95,11 @@ export default function Login({ onLoginSuccess, onLoginStart }: LoginProps) {
         if (!snapshot.empty) {
           const barberDoc = snapshot.docs[0];
           const barberData = barberDoc.data();
-          await signInAnonymously(auth);
+          try {
+            await signInAnonymously(auth);
+          } catch (authErr) {
+            console.warn('Anonymous auth failed, continuing without active auth session:', authErr);
+          }
           onLoginSuccess({
             uid: barberDoc.id,
             name: barberData.name || 'Barbeiro',
@@ -103,7 +113,7 @@ export default function Login({ onLoginSuccess, onLoginStart }: LoginProps) {
         // 3. Query 'clients' collection for Client credentials login
         const qClient = query(
           collection(db, 'clients'),
-          where('username', '==', username.trim()),
+          where('username', '==', normalizedUsername),
           where('password', '==', password.trim())
         );
         const snapshot = await getDocs(qClient);
@@ -111,7 +121,11 @@ export default function Login({ onLoginSuccess, onLoginStart }: LoginProps) {
         if (!snapshot.empty) {
           const clientDoc = snapshot.docs[0];
           const clientData = clientDoc.data();
-          await signInAnonymously(auth);
+          try {
+            await signInAnonymously(auth);
+          } catch (authErr) {
+            console.warn('Anonymous auth failed, continuing without active auth session:', authErr);
+          }
           onLoginSuccess({
             uid: clientDoc.id,
             name: clientData.name || 'Cliente',

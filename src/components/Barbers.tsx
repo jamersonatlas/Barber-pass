@@ -112,7 +112,7 @@ export default function Barbers({ onBack, triggerToast, openConfirmModal }: Barb
           name: bName.trim(),
           phone: bPhone.trim(),
           email: bEmail.trim(),
-          username: bUsername.trim(),
+          username: bUsername.trim().toLowerCase(),
           password: bPassword.trim(),
         });
         triggerToast('Perfil de barbeiro atualizado.');
@@ -125,7 +125,7 @@ export default function Barbers({ onBack, triggerToast, openConfirmModal }: Barb
           name: bName.trim(),
           phone: bPhone.trim(),
           email: bEmail.trim(),
-          username: bUsername.trim(),
+          username: bUsername.trim().toLowerCase(),
           password: bPassword.trim(),
           createdAt: new Date().toISOString()
         });
