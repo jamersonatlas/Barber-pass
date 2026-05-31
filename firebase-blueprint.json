@@ -1,0 +1,90 @@
+{
+  "entities": {
+    "barber": {
+      "title": "Barber",
+      "description": "A barber professional who manages their subscribers",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "phone": { "type": "string" },
+        "email": { "type": "string" },
+        "username": { "type": "string" },
+        "password": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "licenseStatus": { "type": "string", "enum": ["active", "suspended", "pending"] },
+        "licenseValue": { "type": "number" },
+        "licenseDueDay": { "type": "integer" },
+        "contractDurationMonths": { "type": "integer" },
+        "nextPaymentDate": { "type": "string" },
+        "planType": { "type": "string", "enum": ["mensal", "semestral", "anual"] },
+        "notes": { "type": "string" }
+      },
+      "required": ["name", "username", "password", "createdAt"]
+    },
+    "client": {
+      "title": "Client",
+      "description": "A subscribed client in the barber shop",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "phone": { "type": "string" },
+        "email": { "type": "string" },
+        "package": { "type": "string", "enum": ["Básico", "Premium", "VIP"] },
+        "value": { "type": "number" },
+        "due": { "type": "integer" },
+        "status": { "type": "string", "enum": ["ok", "atrasado"] },
+        "obs": { "type": "string" },
+        "lastPaid": { "type": "string" },
+        "ownerId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "package", "value", "due", "status", "ownerId", "createdAt"]
+    },
+    "cut": {
+      "title": "Cut",
+      "description": "A service registration for a client",
+      "type": "object",
+      "properties": {
+        "service": { "type": "string" },
+        "date": { "type": "string" },
+        "obs": { "type": "string" },
+        "clientId": { "type": "string" },
+        "ownerId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["service", "date", "clientId", "ownerId", "createdAt"]
+    },
+    "service": {
+      "title": "Service",
+      "description": "An offered service in the workshop",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "desc": { "type": "string" },
+        "value": { "type": "number" },
+        "package": { "type": "string", "enum": ["Todos", "Básico", "Premium", "VIP"] },
+        "ownerId": { "type": "string" }
+      },
+      "required": ["name", "value", "package", "ownerId"]
+    }
+  },
+  "firestore": {
+    "/barbers/{barberId}": {
+      "schema": "barber",
+      "description": "Barber profiles and credentials"
+    },
+    "/clients/{clientId}": {
+      "schema": "client",
+      "description": "Subscribed clients"
+    },
+    "/clients/{clientId}/cuts/{cutId}": {
+      "schema": "cut",
+      "description": "Completed services for a client"
+    },
+    "/services/{serviceId}": {
+      "schema": "service",
+      "description": "Offered services"
+    }
+  }
+}

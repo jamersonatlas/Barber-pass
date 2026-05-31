@@ -1,0 +1,6 @@
+{
+  "name": "BarberPass",
+  "description": "Sistema completo de gestão de assinaturas, controle de pagamentos e histórico de atendimentos para barbearias.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

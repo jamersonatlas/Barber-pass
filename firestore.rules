@@ -1,0 +1,30 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Global Safety Net (Default Deny)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Barbers Collection
+    match /barbers/{barberId} {
+      allow read, write: if true;
+    }
+
+    // Clients Collection
+    match /clients/{clientId} {
+      allow read, write: if true;
+    }
+
+    // Cuts subcollection
+    match /clients/{clientId}/cuts/{cutId} {
+      allow read, write: if true;
+    }
+
+    // Services Collection
+    match /services/{serviceId} {
+      allow read, write: if true;
+    }
+  }
+}
