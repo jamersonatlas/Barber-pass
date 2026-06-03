@@ -296,6 +296,17 @@ export default function App() {
       return;
     }
 
+    const finalUsername = cUsername.trim()
+      ? cUsername.trim().toLowerCase()
+      : nameStr
+          .toLowerCase()
+          .normalize("NFD")
+          .replace(/[\u0300-\u036f]/g, "")
+          .replace(/[^a-z0-9]/g, "")
+          .substring(0, 15);
+
+    const finalPassword = cPassword.trim() || Math.floor(100000 + Math.random() * 900000).toString();
+
     try {
       if (editingClient) {
         // Edit Client
@@ -325,8 +336,8 @@ export default function App() {
           due: dueNum,
           obs: cObs.trim(),
           checklist: newChecklist,
-          username: cUsername.trim().toLowerCase(),
-          password: cPassword.trim(),
+          username: finalUsername,
+          password: finalPassword,
           updatedAt: new Date().toISOString()
         });
         triggerToast('Cliente atualizado com sucesso!');
@@ -354,8 +365,8 @@ export default function App() {
           lastPaid: todayDate(),
           checklist: newChecklist,
           ownerId: user.uid,
-          username: cUsername.trim().toLowerCase(),
-          password: cPassword.trim(),
+          username: finalUsername,
+          password: finalPassword,
           createdAt: new Date().toISOString()
         });
         triggerToast('Cliente cadastrado com sucesso!');
@@ -1164,29 +1175,68 @@ export default function App() {
 
               {/* Client Portal Credentials Access Fields */}
               <div className="grid grid-cols-2 gap-3 p-3 bg-bg-dark-900/60 border border-border-dark rounded-xl">
-                <div className="flex flex-col gap-1.5 col-span-2">
-                  <span className="text-[10px] uppercase font-semibold text-brand-amber tracking-wider">🔐 Acesso do Cliente ao Portal</span>
+                <div className="flex flex-col gap-1 col-span-2">
+                  <div className="flex justify-between items-center gap-2">
+                    <span className="text-[10px] uppercase font-bold text-brand-amber tracking-wider">🔐 Acesso do Cliente ao Portal</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!cName.trim()) {
+                          triggerToast("Nome completo é obrigatório para gerar acesso!");
+                          return;
+                        }
+                        const autoUser = cName.trim()
+                          .toLowerCase()
+                          .normalize("NFD")
+                          .replace(/[\u0300-\u036f]/g, "") // remove accents
+                          .replace(/[^a-z0-9]/g, "") // alphanumeric only
+                          .substring(0, 15);
+                        const autoPass = Math.floor(100000 + Math.random() * 900000).toString();
+                        setCUsername(autoUser);
+                        setCPassword(autoPass);
+                        triggerToast("Usuário e Senha gerados!");
+                      }}
+                      className="text-[9px] bg-brand-amber text-black hover:bg-brand-amber-hover font-extrabold px-2 py-0.5 rounded cursor-pointer transition-colors"
+                    >
+                      Gerar dados
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-zinc-400">Só você pode criar o acesso. O cliente não pode se registrar sozinho.</p>
                 </div>
-                <div className="flex flex-col gap-2">
+                <div className="flex flex-col gap-1.5">
                   <label className="text-xs font-medium text-text-secondary">Usuário</label>
                   <input
                     type="text"
                     placeholder="Ex: andrecosta"
                     value={cUsername}
                     onChange={e => setCUsername(e.target.value)}
-                    className="font-mono h-9"
+                    className="font-mono h-9 text-xs"
                   />
                 </div>
-                <div className="flex flex-col gap-2">
+                <div className="flex flex-col gap-1.5">
                   <label className="text-xs font-medium text-text-secondary">Senha</label>
                   <input
                     type="text"
                     placeholder="Ex: 123456"
                     value={cPassword}
                     onChange={e => setCPassword(e.target.value)}
-                    className="h-9"
+                    className="h-9 text-xs"
                   />
                 </div>
+                {cUsername && cPassword && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const appUrl = window.location.origin;
+                      const msg = `✂️ *Seu acesso ao Club BarberPass!* ✂️\n\nOlá, *${cName || "cliente"}*!\nSeu barbeiro acaba de cadastrar o seu plano de créditos e o seu acesso ao portal:\n\n🌐 *Acesse o app:* ${appUrl}\n👤 *Seu Usuário:* ${cUsername}\n🔑 *Sua Senha:* ${cPassword}\n\nNo portal, você pode consultar seus cortes restantes no mês e prazos de renovação!`;
+                      navigator.clipboard.writeText(msg);
+                      triggerToast("Mensagem copiada para enviar ao cliente!");
+                    }}
+                    className="col-span-2 mt-1 py-1 px-2.5 rounded text-[10px] bg-brand-amber-bg text-brand-amber hover:bg-brand-amber-bg/80 border border-brand-amber-border/40 font-bold flex items-center justify-center gap-1.5 cursor-pointer transition-colors"
+                  >
+                    <span>📋 Copiar dados para enviar ao WhatsApp</span>
+                  </button>
+                )}
               </div>
 
               {/* Package and Monthly value row */}
