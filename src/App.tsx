@@ -130,9 +130,10 @@ export default function App() {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       if (currentUser) {
         const email = currentUser.email || '';
-        const isSystemAdmin = email.toLowerCase() === 'jamersonferramentas@gmail.com';
+        const isSystemAdmin = email.trim().toLowerCase() === 'jamersonferramentas@gmail.com';
+        const targetUid = isSystemAdmin ? 'admin_master' : currentUser.uid;
         const shapeSession = {
-          uid: currentUser.uid,
+          uid: targetUid,
           displayName: currentUser.displayName || 'Administrador',
           email: email,
           role: isSystemAdmin ? 'admin' : 'barber',
@@ -144,7 +145,7 @@ export default function App() {
         setSeeding(true);
         try {
           // Automatic starter demo seed configuration
-          await seedDatabaseIfEmpty(currentUser.uid);
+          await seedDatabaseIfEmpty(targetUid);
         } catch (error) {
           console.error('Failed to seed default database:', error);
         } finally {

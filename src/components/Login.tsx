@@ -60,10 +60,10 @@ export default function Login({ onLoginSuccess, onLoginStart }: LoginProps) {
       const result = await signInWithPopup(auth, googleProvider);
       const email = result.user.email || '';
       // Administrative email assign
-      const isSystemAdmin = email.toLowerCase() === 'jamersonferramentas@gmail.com';
+      const isSystemAdmin = email.trim().toLowerCase() === 'jamersonferramentas@gmail.com';
       
       onLoginSuccess({
-        uid: result.user.uid,
+        uid: isSystemAdmin ? 'admin_master' : result.user.uid,
         name: result.user.displayName || 'Administrador',
         email: email,
         role: isSystemAdmin ? 'admin' : 'barber',

@@ -2,29 +2,57 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     
-    // Global Safety Net (Default Deny)
+    // Global Safety Net (Default Deny Layout)
     match /{document=**} {
       allow read, write: if false;
     }
 
-    // Barbers Collection
+    // Helper functions for Auth State and Role Verification
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && request.auth.uid == 'admin_master';
+    }
+
+    function isOwner(existingData) {
+      return isSignedIn() && existingData.ownerId == request.auth.uid;
+    }
+
+    function isNewOwner(incomingData) {
+      return isSignedIn() && incomingData.ownerId == request.auth.uid;
+    }
+
+    // 1. Barbers Collection
     match /barbers/{barberId} {
-      allow read, write: if true;
+      // Admins (admin_master) can read/write everything. Individual barbers can only read their own license/profile document.
+      allow read: if isAdmin() || (isSignedIn() && request.auth.uid == barberId);
+      allow write: if isAdmin();
     }
 
-    // Clients Collection
+    // 2. Clients Collection
     match /clients/{clientId} {
-      allow read, write: if true;
+      // Admins or the owner of the client record can read or write.
+      allow read: if isAdmin() || isOwner(resource.data);
+      allow create: if isAdmin() || isNewOwner(request.resource.data);
+      allow update, delete: if isAdmin() || isOwner(resource.data);
     }
 
-    // Cuts subcollection
+    // 3. Cuts subcollection
     match /clients/{clientId}/cuts/{cutId} {
-      allow read, write: if true;
+      // Owner-based access to the cut history documents.
+      allow read: if isAdmin() || isOwner(resource.data);
+      allow create: if isAdmin() || isNewOwner(request.resource.data);
+      allow update, delete: if isAdmin() || isOwner(resource.data);
     }
 
-    // Services Collection
+    // 4. Services Collection
     match /services/{serviceId} {
-      allow read, write: if true;
+      // Catalog of services offered. Isolated by barber.
+      allow read: if isAdmin() || isOwner(resource.data);
+      allow create: if isAdmin() || isNewOwner(request.resource.data);
+      allow update, delete: if isAdmin() || isOwner(resource.data);
     }
   }
 }
