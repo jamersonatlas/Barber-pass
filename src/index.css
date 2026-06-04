@@ -39,9 +39,37 @@
   --color-brand-warning-text: #d4b040;
 }
 
-/* Custom Core Styles to mimic original layout */
+/* Custom Core Styles to mimic original layout and absolutely prevent lateral dragging/zoom */
+html, body {
+  position: fixed !important;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  width: 100vw !important;
+  height: 100vh !important;
+  max-width: 100% !important;
+  max-height: 100% !important;
+  overflow: hidden !important;
+  overscroll-behavior: none !important;
+  touch-action: none; /* Disable gesture zoom and pan at document level */
+}
+
+#root, .app {
+  width: 100% !important;
+  height: 100% !important;
+  max-width: 100vw !important;
+  max-height: 100vh !important;
+  overflow: hidden !important;
+  position: relative !important;
+  touch-action: pan-y; /* Allow smooth vertical scrolling for content areas */
+}
+
+.overflow-y-auto {
+  -webkit-overflow-scrolling: touch; /* High-performance inertial scroll on iOS */
+}
+
 html, body, #root {
-  height: 100%;
   background-color: var(--color-bg-dark-900);
   color: var(--color-text-primary);
   font-family: var(--font-sans);
