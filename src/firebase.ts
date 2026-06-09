@@ -3,8 +3,28 @@ import { getAuth, GoogleAuthProvider } from 'firebase/auth';
 import { getFirestore } from 'firebase/firestore';
 import firebaseConfig from '../firebase-applet-config.json';
 
-const app = initializeApp(firebaseConfig);
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId); /* CRITICAL: The app will break without this line */
+// Support Vercel environment variables or fallback to local AI Studio sandbox in development
+const anyMeta = import.meta as any;
+const metaEnv = anyMeta.env || {};
+
+const resolvedConfig = {
+  apiKey: (metaEnv.VITE_FIREBASE_API_KEY as string) || firebaseConfig.apiKey,
+  authDomain: (metaEnv.VITE_FIREBASE_AUTH_DOMAIN as string) || firebaseConfig.authDomain,
+  projectId: (metaEnv.VITE_FIREBASE_PROJECT_ID as string) || firebaseConfig.projectId,
+  storageBucket: (metaEnv.VITE_FIREBASE_STORAGE_BUCKET as string) || firebaseConfig.storageBucket,
+  messagingSenderId: (metaEnv.VITE_FIREBASE_MESSAGING_SENDER_ID as string) || firebaseConfig.messagingSenderId,
+  appId: (metaEnv.VITE_FIREBASE_APP_ID as string) || firebaseConfig.appId,
+  firestoreDatabaseId: (metaEnv.VITE_FIREBASE_FIRESTORE_DB_ID as string) || firebaseConfig.firestoreDatabaseId,
+};
+
+const app = initializeApp(resolvedConfig);
+
+// If using a custom multi-database with a specific ID, specify it. Otherwise fallback to '(default)'
+const dbId = resolvedConfig.firestoreDatabaseId && resolvedConfig.firestoreDatabaseId !== '(default)' 
+  ? resolvedConfig.firestoreDatabaseId 
+  : undefined;
+
+export const db = getFirestore(app, dbId); /* CRITICAL: The app will break without this line */
 export const auth = getAuth();
 export const googleProvider = new GoogleAuthProvider();
 
