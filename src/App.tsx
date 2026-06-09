@@ -112,6 +112,19 @@ export default function App() {
     }, 2500);
   };
 
+  // Pre-seed database on startup if barbers collection is empty
+  useEffect(() => {
+    const runStartupSeed = async () => {
+      try {
+        await seedDatabaseIfEmpty('barber_default');
+        console.log('Starter database check/seed completed successfully.');
+      } catch (e) {
+        console.warn('Initial seeding alert:', e);
+      }
+    };
+    runStartupSeed();
+  }, []);
+
   // 1. Auth Status monitor
   useEffect(() => {
     // Check local storage session for credentials login
@@ -142,6 +155,13 @@ export default function App() {
           } catch (e) {
             console.error('Failed to parse cached session:', e);
           }
+        }
+
+        // If the user is anonymous, do not logged them in automatically unless we have a matching session
+        if (currentUser.isAnonymous) {
+          setUser(null);
+          setLoading(false);
+          return;
         }
 
         const email = currentUser.email || '';

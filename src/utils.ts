@@ -13,22 +13,22 @@ const INITIAL_SERVICES = [
 
 // Initial default clients from HTML as sandbox starter
 const INITIAL_CLIENTS = [
-  { name: 'André Costa', phone: '(35) 98888-1111', email: 'andre@email.com', package: 'Premium', value: 120, due: 15, status: 'ok', obs: '', lastPaid: '2026-05-15', cuts: [
+  { name: 'André Costa', phone: '(35) 98888-1111', email: 'andre@email.com', package: 'Premium', value: 120, due: 15, status: 'ok', obs: '', lastPaid: '2026-05-15', username: 'andre', password: '123456', cuts: [
     { service: 'Corte + Barba', date: '2026-05-10', obs: 'Degradê fino nas laterais' },
     { service: 'Corte simples', date: '2026-04-22', obs: '' }
   ]},
-  { name: 'Marcos Rocha', phone: '(35) 99111-2222', email: '', package: 'Básico', value: 70, due: 1, status: 'atrasado', obs: '', lastPaid: '2026-04-01', cuts: [
+  { name: 'Marcos Rocha', phone: '(35) 99111-2222', email: '', package: 'Básico', value: 70, due: 1, status: 'atrasado', obs: '', lastPaid: '2026-04-01', username: 'marcos', password: '123456', cuts: [
     { service: 'Corte simples', date: '2026-04-28', obs: '' }
   ]},
-  { name: 'João Silva', phone: '(35) 97777-3333', email: 'joao@email.com', package: 'VIP', value: 200, due: 5, status: 'atrasado', obs: 'Cliente VIP desde 2023', lastPaid: '2026-04-05', cuts: [
+  { name: 'João Silva', phone: '(35) 97777-3333', email: 'joao@email.com', package: 'VIP', value: 200, due: 5, status: 'atrasado', obs: 'Cliente VIP desde 2023', lastPaid: '2026-04-05', username: 'joao', password: '123456', cuts: [
     { service: 'Corte + Barba', date: '2026-05-02', obs: '' },
     { service: 'Hidratação', date: '2026-04-15', obs: 'Hidratação com óleo de argan' }
   ]},
-  { name: 'Rafael Nunes', phone: '(35) 96666-4444', email: '', package: 'Básico', value: 70, due: 20, status: 'ok', obs: '', lastPaid: '2026-05-20', cuts: [] },
-  { name: 'Bruno Martins', phone: '(35) 95555-5555', email: 'bruno@email.com', package: 'Premium', value: 120, due: 25, status: 'ok', obs: '', lastPaid: '2026-05-25', cuts: [
+  { name: 'Rafael Nunes', phone: '(35) 96666-4444', email: '', package: 'Básico', value: 70, due: 20, status: 'ok', obs: '', lastPaid: '2026-05-20', username: 'rafael', password: '123456', cuts: [] },
+  { name: 'Bruno Martins', phone: '(35) 95555-5555', email: 'bruno@email.com', package: 'Premium', value: 120, due: 25, status: 'ok', obs: '', lastPaid: '2026-05-25', username: 'bruno', password: '123456', cuts: [
     { service: 'Corte + Barba', date: '2026-05-12', obs: '' }
   ]},
-  { name: 'Pedro Oliveira', phone: '(35) 94444-6666', email: '', package: 'Premium', value: 120, due: 8, status: 'atrasado', obs: '', lastPaid: '2026-04-08', cuts: [] }
+  { name: 'Pedro Oliveira', phone: '(35) 94444-6666', email: '', package: 'Premium', value: 120, due: 8, status: 'atrasado', obs: '', lastPaid: '2026-04-08', username: 'pedro', password: '123456', cuts: [] }
 ];
 
 export function getDefaultChecklist(pkg: 'Básico' | 'Premium' | 'VIP'): { id: string; serviceName: string; done: boolean; dateDone?: string; cutId?: string }[] {
@@ -116,6 +116,8 @@ export async function seedDatabaseIfEmpty(userId: string) {
           status: c.status,
           obs: c.obs,
           lastPaid: c.lastPaid,
+          username: c.username,
+          password: c.password,
           ownerId: userId,
           checklist: seededChecklist,
           createdAt: new Date().toISOString()
@@ -137,6 +139,28 @@ export async function seedDatabaseIfEmpty(userId: string) {
           });
         }
       }
+    }
+
+    // 3. Check and seed a default barber if empty
+    const qBarbers = query(collection(db, 'barbers'));
+    const barbersSnap = await getDocs(qBarbers);
+    if (barbersSnap.empty) {
+      console.log('Seeding default barber lucas');
+      const barberRef = doc(db, 'barbers', 'barber_default');
+      await setDoc(barberRef, {
+        id: 'barber_default',
+        name: 'Lucas Barbeiro',
+        phone: '(35) 99999-8888',
+        email: 'lucas@barberpass.com',
+        username: 'lucas',
+        password: '123456',
+        licenseStatus: 'active',
+        licenseValue: 50.00,
+        licenseDueDay: 10,
+        contractDurationMonths: 12,
+        planType: 'mensal',
+        createdAt: new Date().toISOString()
+      });
     }
   } catch (error) {
     console.error('Error seeding database:', error);
