@@ -68,6 +68,7 @@ export default function App() {
   // Modals & Forms State
   const [clientModalOpen, setClientModalOpen] = useState(false);
   const [editingClient, setEditingClient] = useState<Client | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
   
   const [serviceModalOpen, setServiceModalOpen] = useState(false);
   
@@ -301,6 +302,7 @@ export default function App() {
   // CLIENT CRUD OPERATIONS
   const openAddClientModal = () => {
     setEditingClient(null);
+    setSaveError(null);
     setCName('');
     setCPhone('');
     setCEmail('');
@@ -316,6 +318,7 @@ export default function App() {
 
   const openEditClientModal = (client: Client) => {
     setEditingClient(client);
+    setSaveError(null);
     setCName(client.name);
     setCPhone(client.phone || '');
     setCEmail(client.email || '');
@@ -331,6 +334,7 @@ export default function App() {
 
   const handleSaveClient = async () => {
     if (!user) return;
+    setSaveError(null);
     const nameStr = cName.trim();
     const valNum = parseFloat(cValue);
     const dueNum = parseInt(cDue);
@@ -416,9 +420,25 @@ export default function App() {
         triggerToast('Cliente cadastrado com sucesso!');
       }
       setClientModalOpen(false);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error saving client:', error);
-      handleFirestoreError(error, OperationType.WRITE, 'clients');
+      let errMsg = 'Erro desconhecido.';
+      if (error instanceof Error) {
+        errMsg = error.message;
+      } else {
+        errMsg = String(error);
+      }
+      
+      // If FirestoreErrorInfo was thrown, extract the clean message
+      try {
+        if (errMsg.startsWith('{') && errMsg.endsWith('}')) {
+          const parsed = JSON.parse(errMsg);
+          if (parsed.error) errMsg = parsed.error;
+        }
+      } catch (pe) {}
+      
+      setSaveError(errMsg);
+      triggerToast('Falha ao salvar cliente. Veja o erro no formulário.');
     }
   };
 
@@ -1426,6 +1446,12 @@ export default function App() {
                 />
               </div>
             </div>
+
+            {saveError && (
+              <div className="px-5 py-2.5 bg-red-950/40 border-t border-b border-red-900/30 text-red-300 text-xs font-semibold leading-relaxed">
+                🛑 Erro ao salvar cadastro: {saveError}
+              </div>
+            )}
 
             <div className="modal-footer border-t border-border-dark p-4 flex justify-end gap-3 bg-bg-dark-850">
               <button

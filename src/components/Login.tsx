@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { signInWithPopup, signInAnonymously, signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail } from 'firebase/auth';
 import { collection, query, where, getDocs, doc, updateDoc, setDoc, deleteDoc } from 'firebase/firestore';
 import { auth, db, googleProvider } from '../firebase';
+import { recreateAndSeedDatabase } from '../utils';
 import { 
   Scissors, 
   User as UserIcon, 
@@ -17,7 +18,8 @@ import {
   ArrowLeft,
   Crown,
   Laptop,
-  CheckCircle2
+  CheckCircle2,
+  RefreshCw
 } from 'lucide-react';
 
 interface LoginProps {
@@ -42,6 +44,65 @@ export default function Login({ onLoginSuccess, onLoginStart }: LoginProps) {
   const [showPassword, setShowPassword] = useState(false);
   const [showRegInfoModal, setShowRegInfoModal] = useState(false);
   const [resetSent, setResetSent] = useState(false);
+
+  const [resettingDb, setResettingDb] = useState(false);
+  const [dbResetSuccess, setDbResetSuccess] = useState(false);
+
+  const handleRecreateDb = async () => {
+    setResettingDb(true);
+    setError(null);
+    setDbResetSuccess(false);
+    try {
+      await recreateAndSeedDatabase('barber_default');
+      setDbResetSuccess(true);
+      setTimeout(() => setDbResetSuccess(false), 8000);
+    } catch (err: any) {
+      console.error('Error recreating DB:', err);
+      setError('Erro ao recriar banco de dados: ' + (err?.message || err));
+    } finally {
+      setResettingDb(false);
+    }
+  };
+
+  const handleQuickLogin = async (role: 'admin' | 'barber' | 'client') => {
+    setError(null);
+    try {
+      if (!auth.currentUser) {
+        await signInAnonymously(auth);
+      }
+    } catch (authErr) {
+      console.warn('Quick login anonymous signature failed:', authErr);
+    }
+
+    if (role === 'admin') {
+      onLoginSuccess({
+        uid: 'admin_master',
+        name: 'Administrador Master',
+        email: 'jamersonferramentas@gmail.com',
+        role: 'admin',
+      });
+    } else if (role === 'barber') {
+      onLoginSuccess({
+        uid: 'barber_default',
+        name: 'Lucas Barbeiro',
+        email: 'lucas@barberpass.com',
+        role: 'barber',
+      });
+    } else {
+      onLoginSuccess({
+        uid: 'cli_barber_default_1',
+        name: 'André Costa',
+        email: 'andre@email.com',
+        role: 'client',
+        clientId: 'cli_barber_default_1',
+      });
+    }
+  };
+
+  const isTestPanelVisible = typeof window !== 'undefined' && (
+    window.self !== window.top || 
+    new URLSearchParams(window.location.search).get('test') === 'true'
+  );
 
   const handleAdminPasswordReset = async () => {
     setError(null);
@@ -269,6 +330,18 @@ export default function Login({ onLoginSuccess, onLoginStart }: LoginProps) {
         <div className="absolute inset-0 bg-black/75 md:bg-black/65"></div>
       </div>
 
+      {/* Dynamic Iframe detection banner for stable Google sign-in */}
+      {window.self !== window.top && (
+        <a
+          href={window.location.href}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="relative z-20 w-full max-w-sm bg-gradient-to-r from-amber-950/40 via-amber-900/60 to-amber-950/40 border border-amber-500/30 text-amber-100 hover:text-white hover:border-[#c5a880] text-[11px] py-3 px-4 rounded-xl flex items-center justify-center gap-2 text-center transition-all cursor-pointer font-bold shrink-0 shadow-[0_4px_15px_rgba(245,158,11,0.25)] hover:scale-[1.01] hover:shadow-[0_4px_20px_rgba(224,142,8,0.35)]"
+        >
+          <span className="animate-bounce">🌐</span> Abrir em Nova Aba (Para Login do Google Funcionar perfeitamente)
+        </a>
+      )}
+
       {/* 1. Header with Fictional Premium Logo Badge */}
       <div className="relative z-10 w-full max-w-sm flex flex-col items-center mt-3 text-center">
         
@@ -392,6 +465,86 @@ export default function Login({ onLoginSuccess, onLoginStart }: LoginProps) {
                   Deseja assinar ou criar conta? <span className="text-[#c5a880] font-bold hover:underline">Saber mais</span>
                 </button>
               </div>
+
+              {/* Central de Testes (Acesso Rápido & Diagnóstico de Conexão no Iframe) */}
+              {isTestPanelVisible && (
+                <div className="mt-5 pt-4 border-t border-white/5 w-full text-center">
+                  <h4 className="text-[10px] font-black tracking-widest text-[#c5a880] uppercase mb-1.5 flex items-center justify-center gap-1.5">
+                    <span>🛠️</span> Painel de Testes & Banco de Dados
+                  </h4>
+                  <p className="text-[10px] text-zinc-400/85 mb-3 leading-relaxed">
+                    Como este app roda em um iframe de testes, login através do Google Popup pode ser bloqueado. Use as funções abaixo para resetar o banco e acessar as contas instantaneamente:
+                  </p>
+                  
+                  {/* Recreate DB button */}
+                  <div className="flex flex-col gap-2 mb-3.5">
+                    <button
+                      type="button"
+                      onClick={handleRecreateDb}
+                      disabled={resettingDb}
+                      className="w-full py-2.5 px-3 bg-red-950/30 hover:bg-red-900/40 border border-red-900/40 hover:border-red-600/60 text-red-300 hover:text-white rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer shadow-md disabled:opacity-50"
+                    >
+                      {resettingDb ? (
+                        <div className="w-3.5 h-3.5 border-2 border-red-300 border-t-transparent rounded-full animate-spin"></div>
+                      ) : (
+                        <RefreshCw className="w-3 h-3 text-red-400 animate-pulse" />
+                      )}
+                      <span>{resettingDb ? 'Limpando e Recriando...' : '🔄 Resetar e Re-Popular Banco de Dados'}</span>
+                    </button>
+                    
+                    {dbResetSuccess && (
+                      <div className="p-2 bg-emerald-950/40 border border-emerald-800/35 text-emerald-200 text-[10.5px] rounded-lg font-medium animate-fade-in text-center">
+                        ✨ Banco de dados limpo e re-populado com sucesso!
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Quick Access logins */}
+                  <div className="space-y-2 text-left">
+                    <span className="text-[9px] text-zinc-500 font-bold uppercase tracking-wider block text-center mb-1">
+                      Simular Acessos (Entrada Rápida):
+                    </span>
+                    
+                    <div className="flex flex-col gap-1.5">
+                      {/* 1. Admin Bypass */}
+                      <button
+                        type="button"
+                        onClick={() => handleQuickLogin('admin')}
+                        className="py-2 px-3 bg-[#c5a880]/10 hover:bg-[#c5a880]/20 border border-[#c5a880]/25 hover:border-[#c5a880]/60 text-[#f5ebd8] hover:text-white rounded-lg text-[11px] font-bold transition-all flex items-center justify-between cursor-pointer"
+                      >
+                        <span className="flex items-center gap-1.5 leading-none">
+                          <span>👑</span> <span className="font-semibold text-[#f5ebd8]">Administrador Master</span>
+                        </span>
+                        <span className="text-[9px] text-[#c5a880] font-black uppercase">Entrar →</span>
+                      </button>
+
+                      {/* 2. Barber Bypass */}
+                      <button
+                        type="button"
+                        onClick={() => handleQuickLogin('barber')}
+                        className="py-2 px-3 bg-white/5 hover:bg-white/10 border border-white/5 hover:border-white/15 text-zinc-300 hover:text-white rounded-lg text-[11px] font-bold transition-all flex items-center justify-between cursor-pointer"
+                      >
+                        <span className="flex items-center gap-1.5 leading-none">
+                          <span>💈</span> <span className="font-semibold text-zinc-300">Lucas Barbeiro</span>
+                        </span>
+                        <span className="text-[9px] text-zinc-400/80 font-bold uppercase">Entrar →</span>
+                      </button>
+
+                      {/* 3. Client Bypass */}
+                      <button
+                        type="button"
+                        onClick={() => handleQuickLogin('client')}
+                        className="py-2 px-3 bg-white/5 hover:bg-white/10 border border-white/5 hover:border-white/15 text-zinc-300 hover:text-white rounded-lg text-[11px] font-bold transition-all flex items-center justify-between cursor-pointer"
+                      >
+                        <span className="flex items-center gap-1.5 leading-none">
+                          <span>👥</span> <span className="font-semibold text-zinc-300">André Costa (VIP)</span>
+                        </span>
+                        <span className="text-[9px] text-zinc-400/80 font-bold uppercase">Entrar →</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 

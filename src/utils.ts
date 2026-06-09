@@ -1,4 +1,4 @@
-import { collection, doc, getDocs, setDoc, writeBatch, query, where } from 'firebase/firestore';
+import { collection, doc, getDocs, setDoc, writeBatch, query, where, deleteDoc } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from './firebase';
 import { Client, Service } from './types';
 
@@ -165,6 +165,68 @@ export async function seedDatabaseIfEmpty(userId: string) {
   } catch (error) {
     console.error('Error seeding database:', error);
     handleFirestoreError(error, OperationType.WRITE, 'seeding');
+  }
+}
+
+export async function recreateAndSeedDatabase(userId: string) {
+  try {
+    console.log('Starting full database recreation for user', userId);
+    
+    // 1. Get and delete all services
+    const qServices = query(collection(db, 'services'));
+    const servicesSnap = await getDocs(qServices);
+    for (const serviceDoc of servicesSnap.docs) {
+      try {
+        await deleteDoc(doc(db, 'services', serviceDoc.id));
+      } catch (err) {
+        console.warn('Err deleting service doc', serviceDoc.id, err);
+      }
+    }
+    
+    // 2. Get and delete all clients and their subcollections
+    const qClients = query(collection(db, 'clients'));
+    const clientsSnap = await getDocs(qClients);
+    for (const clientDoc of clientsSnap.docs) {
+      const clientId = clientDoc.id;
+      try {
+        // Get cuts subcollection
+        const qCuts = query(collection(db, 'clients', clientId, 'cuts'));
+        const cutsSnap = await getDocs(qCuts);
+        for (const cutDoc of cutsSnap.docs) {
+          try {
+            await deleteDoc(doc(db, 'clients', clientId, 'cuts', cutDoc.id));
+          } catch (err) {
+            console.warn('Err deleting cut doc', cutDoc.id, err);
+          }
+        }
+        await deleteDoc(doc(db, 'clients', clientId));
+      } catch (err) {
+        console.warn('Err deleting client doc', clientId, err);
+      }
+    }
+    
+    // 3. Get and delete all barbers
+    const qBarbers = query(collection(db, 'barbers'));
+    const barbersSnap = await getDocs(qBarbers);
+    for (const barberDoc of barbersSnap.docs) {
+      try {
+        await deleteDoc(doc(db, 'barbers', barberDoc.id));
+      } catch (err) {
+        console.warn('Err deleting barber doc', barberDoc.id, err);
+      }
+    }
+    
+    console.log('Database wiped. Now seeding...');
+    
+    // Now seed it fresh
+    await seedDatabaseIfEmpty(userId);
+    
+    console.log('Recreation and seeding completed successfully!');
+    return true;
+  } catch (error) {
+    console.error('Error recreating database:', error);
+    handleFirestoreError(error, OperationType.WRITE, 'recreate-database');
+    throw error;
   }
 }
 
