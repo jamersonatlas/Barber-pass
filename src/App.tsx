@@ -129,6 +129,21 @@ export default function App() {
 
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       if (currentUser) {
+        // Read cached session first to prevent anonymous login overwrites
+        const activeCached = localStorage.getItem('barberpass_session');
+        if (activeCached) {
+          try {
+            const parsed = JSON.parse(activeCached);
+            if (parsed && (parsed.role === 'client' || parsed.role === 'barber' || parsed.role === 'admin')) {
+              setUser(parsed);
+              setLoading(false);
+              return;
+            }
+          } catch (e) {
+            console.error('Failed to parse cached session:', e);
+          }
+        }
+
         const email = currentUser.email || '';
         const isSystemAdmin = email.trim().toLowerCase() === 'jamersonferramentas@gmail.com';
         const targetUid = isSystemAdmin ? 'admin_master' : currentUser.uid;

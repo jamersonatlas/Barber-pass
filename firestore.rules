@@ -15,8 +15,7 @@ service cloud.firestore {
     function isAdmin() {
       return isSignedIn() && (
         request.auth.uid == 'admin_master' ||
-        request.auth.token.email == 'jamersonferramentas@gmail.com' ||
-        exists(/databases/$(database)/documents/admin_sessions/$(request.auth.uid))
+        request.auth.token.email == 'jamersonferramentas@gmail.com'
       );
     }
 
@@ -55,10 +54,8 @@ service cloud.firestore {
 
     // 2. Clients Collection
     match /clients/{clientId} {
-      // Admins, the owner, or the client themselves (matched by logical id or active firebaseUid) can read/write
-      allow read: if isAdmin() || 
-                    isOwner(resource.data) || 
-                    (isSignedIn() && (clientId == request.auth.uid || resource.data.firebaseUid == request.auth.uid));
+      // Anyone signed in can read (required for login verification and look-ups)
+      allow read: if isSignedIn();
       
       allow create: if isAdmin() || isNewOwner(request.resource.data);
       
@@ -76,8 +73,10 @@ service cloud.firestore {
 
     // 3. Cuts subcollection
     match /clients/{clientId}/cuts/{cutId} {
-      // Owner-based access to the cut history documents.
-      allow read: if isAdmin() || isOwner(resource.data);
+      // Admins, the owner, or the client themselves (matched by logical id or linked firebaseUid) can read/write
+      allow read: if isAdmin() || 
+                    isOwner(resource.data) || 
+                    (isSignedIn() && (clientId == request.auth.uid || get(/databases/$(database)/documents/clients/$(clientId)).data.firebaseUid == request.auth.uid));
       allow create: if isAdmin() || isNewOwner(request.resource.data);
       allow update, delete: if isAdmin() || isOwner(resource.data);
     }
@@ -88,13 +87,6 @@ service cloud.firestore {
       allow read: if isAdmin() || isOwner(resource.data);
       allow create: if isAdmin() || isNewOwner(request.resource.data);
       allow update, delete: if isAdmin() || isOwner(resource.data);
-    }
-
-    // 5. Admin Sessions (Iframe preview bypass credentials registration)
-    match /admin_sessions/{uid} {
-      allow read: if isSignedIn() && request.auth.uid == uid;
-      allow create, update: if isSignedIn() && request.auth.uid == uid && request.resource.data.secret == 'admin123';
-      allow delete: if isSignedIn() && request.auth.uid == uid;
     }
   }
 }
