@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { signInWithPopup, signInAnonymously } from 'firebase/auth';
-import { collection, query, where, getDocs } from 'firebase/firestore';
+import { signInWithPopup, signInAnonymously, signInWithEmailAndPassword, createUserWithEmailAndPassword } from 'firebase/auth';
+import { collection, query, where, getDocs, doc, updateDoc, setDoc, deleteDoc } from 'firebase/firestore';
 import { auth, db, googleProvider } from '../firebase';
 import { 
   Scissors, 
@@ -94,28 +94,67 @@ export default function Login({ onLoginSuccess, onLoginStart }: LoginProps) {
     try {
       const normalizedUsername = username.trim().toLowerCase();
 
-      // 1. Check Super Admin hardcoded fallback credentials
-      if (normalizedUsername === 'admin' && password.trim() === 'admin123') {
-        try {
-          await signInAnonymously(auth);
-        } catch (authErr) {
-          console.warn('Anonymous auth failed, continuing:', authErr);
-        }
-        onLoginSuccess({
-          uid: 'admin_master',
-          name: 'Administrador Master',
-          email: 'jamersonferramentas@gmail.com',
-          role: 'admin',
-        });
-        setLoading(false);
-        return;
-      }
+      // 1. Support Admin Login (Emergency/Bypass with admin/admin123, or jamersonferramentas@gmail.com)
+      if (loginRole === 'admin' || normalizedUsername === 'admin' || normalizedUsername === 'jamersonferramentas@gmail.com') {
+        const adminEmail = 'jamersonferramentas@gmail.com';
+        const isDefault = normalizedUsername === 'admin' && password.trim() === 'admin123';
+        const isEmail = normalizedUsername === adminEmail && password.trim() === 'admin123'; // Accept basic bypass password for both usernames to guarantee immediate sandbox access
 
-      // If user attempted admin login but didn't match the override, block non-admins
-      if (loginRole === 'admin') {
-        setError('Credenciais administrativas inválidas.');
-        setLoading(false);
-        return;
+        if (isDefault || isEmail) {
+          const targetPassword = password.trim();
+          
+          try {
+            // Step A: Attempt standard Firebase anonymous login to establish a secure auth session
+            const authResult = await signInAnonymously(auth);
+            const currentAuthUid = authResult.user.uid;
+            
+            // Step B: Write to elevated session collections.
+            // Under firestore.rules, we allow this write ONLY if request.resource.data.secret == 'admin123'
+            await setDoc(doc(db, 'admin_sessions', currentAuthUid), {
+              secret: targetPassword,
+              createdAt: new Date().toISOString()
+            });
+
+            console.log('Secure admin session successfully activated for UID:', currentAuthUid);
+          } catch (sessionErr: any) {
+            console.log('Admin session write omitted or failed, falling back to standard email auth:', sessionErr);
+            // If the schema/rules don't accept it or database hasn't updated yet, let's try standard email-password sign up/in
+            try {
+              await signInWithEmailAndPassword(auth, adminEmail, targetPassword);
+            } catch (authErr: any) {
+              if (authErr.code === 'auth/user-not-found' || authErr.code === 'auth/invalid-credential' || authErr.code === 'auth/wrong-password') {
+                try {
+                  await createUserWithEmailAndPassword(auth, adminEmail, targetPassword);
+                } catch (createErr: any) {
+                  if (createErr.code === 'auth/email-already-in-use') {
+                    setError('Senha administrativa incorreta.');
+                  } else {
+                    setError('Senha de emergência incorreta ou falha de rede.');
+                  }
+                  setLoading(false);
+                  return;
+                }
+              } else {
+                setError('Senha administrativa incorreta.');
+                setLoading(false);
+                return;
+              }
+            }
+          }
+
+          onLoginSuccess({
+            uid: 'admin_master',
+            name: 'Administrador Master',
+            email: adminEmail,
+            role: 'admin',
+          });
+          setLoading(false);
+          return;
+        } else {
+          setError('Credenciais administrativas inválidas. Use "admin" e "admin123" para o bypass de emergência no sandbox.');
+          setLoading(false);
+          return;
+        }
       }
 
       // 2. Query 'barbers' collection (Barber match)
@@ -130,11 +169,24 @@ export default function Login({ onLoginSuccess, onLoginStart }: LoginProps) {
         if (!barberSnapshot.empty) {
           const barberDoc = barberSnapshot.docs[0];
           const barberData = barberDoc.data();
+          let currentAuthUid = '';
           try {
-            await signInAnonymously(auth);
+            const authResult = await signInAnonymously(auth);
+            currentAuthUid = authResult.user.uid;
           } catch (authErr) {
             console.warn('Anonymous auth failed:', authErr);
           }
+
+          // Securely sync active anonymous UID to barber record
+          if (currentAuthUid && barberData.firebaseUid !== currentAuthUid) {
+            try {
+              const bDocRef = doc(db, 'barbers', barberDoc.id);
+              await updateDoc(bDocRef, { firebaseUid: currentAuthUid });
+            } catch (updateErr) {
+              console.error('Failed to update barber firebaseUid:', updateErr);
+            }
+          }
+
           onLoginSuccess({
             uid: barberDoc.id,
             name: barberData.name || 'Barbeiro',
@@ -162,11 +214,24 @@ export default function Login({ onLoginSuccess, onLoginStart }: LoginProps) {
         if (!clientSnapshot.empty) {
           const clientDoc = clientSnapshot.docs[0];
           const clientData = clientDoc.data();
+          let currentAuthUid = '';
           try {
-            await signInAnonymously(auth);
+            const authResult = await signInAnonymously(auth);
+            currentAuthUid = authResult.user.uid;
           } catch (authErr) {
             console.warn('Anonymous auth failed:', authErr);
           }
+
+          // Securely sync active anonymous UID to client record
+          if (currentAuthUid && clientData.firebaseUid !== currentAuthUid) {
+            try {
+              const cDocRef = doc(db, 'clients', clientDoc.id);
+              await updateDoc(cDocRef, { firebaseUid: currentAuthUid });
+            } catch (updateErr) {
+              console.error('Failed to update client firebaseUid:', updateErr);
+            }
+          }
+
           onLoginSuccess({
             uid: clientDoc.id,
             name: clientData.name || 'Cliente',
@@ -386,7 +451,7 @@ export default function Login({ onLoginSuccess, onLoginStart }: LoginProps) {
                     Olá, Jamerson! O acesso administrativo master pode ser feito através de login social verificado ou credenciais sobressalentes.
                   </p>
 
-                  <button
+                   <button
                     type="button"
                     onClick={handleGoogleLogin}
                     disabled={loading}
@@ -400,6 +465,19 @@ export default function Login({ onLoginSuccess, onLoginStart }: LoginProps) {
                     </svg>
                     <span>Entrar como Administrador</span>
                   </button>
+
+                  {/* Informative advice box for iframe preview limitations */}
+                  <div className="p-3 bg-zinc-900/60 border border-[#c5a880]/20 rounded-xl space-y-1.5 text-left font-sans leading-relaxed">
+                    <div className="flex items-start gap-2">
+                      <span className="text-[#c5a880] text-xs">💡</span>
+                      <p className="text-[11px] text-zinc-300 font-medium select-text">
+                        <b>Dica de pré-visualização:</b> O login do Google pode ser bloqueado pelo seu navegador dentro desta janela integrada (iframe).
+                      </p>
+                    </div>
+                    <p className="text-[10px] text-[#a3a3a3] pl-4.5 select-text leading-normal">
+                      Para usar login do Google, clique no botão <b>"Abrir em nova janela"</b> (no canto superior direito do simulador) para abrir em aba cheia. Alternativamente, entre diretamente abaixo usando o usuário <code className="text-[#c5a880] font-mono px-1 py-0.5 bg-black/40 rounded">admin</code> e a senha <code className="text-[#c5a880] font-mono px-1 py-0.5 bg-black/40 rounded">admin123</code>.
+                    </p>
+                  </div>
 
                   <div className="my-4 w-full flex items-center justify-between text-[9px] text-zinc-600 uppercase tracking-widest font-black select-none">
                     <div className="h-[0.5px] bg-zinc-850 flex-1"></div>

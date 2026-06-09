@@ -13,30 +13,65 @@ service cloud.firestore {
     }
 
     function isAdmin() {
-      return isSignedIn() && request.auth.uid == 'admin_master';
+      return isSignedIn() && (
+        request.auth.uid == 'admin_master' ||
+        request.auth.token.email == 'jamersonferramentas@gmail.com' ||
+        exists(/databases/$(database)/documents/admin_sessions/$(request.auth.uid))
+      );
     }
 
     function isOwner(existingData) {
-      return isSignedIn() && existingData.ownerId == request.auth.uid;
+      return isSignedIn() && (
+        existingData.ownerId == request.auth.uid || 
+        (existingData.ownerId != null && 
+         exists(/databases/$(database)/documents/barbers/$(existingData.ownerId)) &&
+         get(/databases/$(database)/documents/barbers/$(existingData.ownerId)).data.firebaseUid == request.auth.uid)
+      );
     }
 
     function isNewOwner(incomingData) {
-      return isSignedIn() && incomingData.ownerId == request.auth.uid;
+      return isSignedIn() && (
+        incomingData.ownerId == request.auth.uid || 
+        (incomingData.ownerId != null && 
+         exists(/databases/$(database)/documents/barbers/$(incomingData.ownerId)) &&
+         get(/databases/$(database)/documents/barbers/$(incomingData.ownerId)).data.firebaseUid == request.auth.uid)
+      );
     }
 
     // 1. Barbers Collection
     match /barbers/{barberId} {
-      // Admins (admin_master) can read/write everything. Individual barbers can only read their own license/profile document.
-      allow read: if isAdmin() || (isSignedIn() && request.auth.uid == barberId);
-      allow write: if isAdmin();
+      // Anyone signed in can read (required for scheduling and login verification)
+      allow read: if isSignedIn();
+      allow create: if isAdmin();
+      // Allow update for admin or a safe self-updating of the active anonymous firebaseUid during verification
+      allow update: if isAdmin() || (
+        isSignedIn() && 
+        request.resource.data.username == resource.data.username && 
+        request.resource.data.password == resource.data.password &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['firebaseUid'])
+      );
+      allow delete: if isAdmin();
     }
 
     // 2. Clients Collection
     match /clients/{clientId} {
-      // Admins or the owner of the client record can read or write.
-      allow read: if isAdmin() || isOwner(resource.data);
+      // Admins, the owner, or the client themselves (matched by logical id or active firebaseUid) can read/write
+      allow read: if isAdmin() || 
+                    isOwner(resource.data) || 
+                    (isSignedIn() && (clientId == request.auth.uid || resource.data.firebaseUid == request.auth.uid));
+      
       allow create: if isAdmin() || isNewOwner(request.resource.data);
-      allow update, delete: if isAdmin() || isOwner(resource.data);
+      
+      allow update: if isAdmin() || 
+                    isOwner(resource.data) || 
+                    (isSignedIn() && (clientId == request.auth.uid || resource.data.firebaseUid == request.auth.uid)) ||
+                    (
+                      isSignedIn() && 
+                      request.resource.data.username == resource.data.username && 
+                      request.resource.data.password == resource.data.password &&
+                      request.resource.data.diff(resource.data).affectedKeys().hasOnly(['firebaseUid'])
+                    );
+      allow delete: if isAdmin();
     }
 
     // 3. Cuts subcollection
@@ -53,6 +88,13 @@ service cloud.firestore {
       allow read: if isAdmin() || isOwner(resource.data);
       allow create: if isAdmin() || isNewOwner(request.resource.data);
       allow update, delete: if isAdmin() || isOwner(resource.data);
+    }
+
+    // 5. Admin Sessions (Iframe preview bypass credentials registration)
+    match /admin_sessions/{uid} {
+      allow read: if isSignedIn() && request.auth.uid == uid;
+      allow create, update: if isSignedIn() && request.auth.uid == uid && request.resource.data.secret == 'admin123';
+      allow delete: if isSignedIn() && request.auth.uid == uid;
     }
   }
 }

@@ -244,6 +244,14 @@ export default function App() {
   // Sign out
   const handleSignOut = async () => {
     try {
+      if (auth.currentUser) {
+        try {
+          // Clean up the temporary admin session document if they log out
+          await deleteDoc(doc(db, 'admin_sessions', auth.currentUser.uid));
+        } catch (dbErr) {
+          console.debug('Clean of admin session omitted or failed:', dbErr);
+        }
+      }
       await signOut(auth);
       localStorage.removeItem('barberpass_session');
       setUser(null);
