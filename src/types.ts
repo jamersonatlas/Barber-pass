@@ -43,6 +43,14 @@ export interface Barber {
   username: string;
   password: string;
   createdAt: string;
+  avatarUrl?: string;
+  
+  // Customization fields
+  logoUrl?: string;
+  bannerUrl?: string;
+  slogan?: string;
+  instagram?: string;
+  address?: string;
   
   // Platform license parameters
   licenseStatus?: 'active' | 'suspended' | 'pending';
@@ -61,4 +69,14 @@ export interface Service {
   value: number;
   package: 'Todos' | 'Básico' | 'Premium' | 'VIP';
   ownerId: string;
+  imageUrl?: string; // photo/example image of the service
+}
+
+export interface Employee {
+  id: string;
+  barbeariaId: string; // references Barberid (owner barbearia)
+  name: string;
+  phone?: string;
+  avatarUrl?: string;
+  createdAt: string;
 }

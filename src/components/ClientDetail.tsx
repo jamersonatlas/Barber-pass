@@ -135,7 +135,7 @@ export default function ClientDetail({
                   <div className="text-[10px] text-text-muted font-semibold uppercase tracking-wider mt-0.5">Créditos do Plano</div>
                 </div>
                 <div className="w-11 h-11 relative flex items-center justify-center shrink-0">
-                  <svg className="w-full h-full transform -rotate-90">
+                  <svg className="w-full h-full transform -rotate-90" viewBox="0 0 44 44">
                     <circle cx="22" cy="22" r="18" fill="transparent" stroke="#1d1e22" strokeWidth="3" />
                     <circle
                       cx="22"

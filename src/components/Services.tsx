@@ -52,8 +52,20 @@ export default function Services({ services, onOpenAddModal, onDeleteService }: 
                 ) : (
                   services.map(s => (
                     <tr key={s.id} className="hover:bg-bg-dark-700/40 transition-colors">
-                      <td className="py-3.5 px-4 font-medium text-text-primary text-xs">
-                        {s.name}
+                      <td className="py-3.5 px-4 font-medium text-text-primary text-xs flex items-center gap-2.5">
+                        {s.imageUrl ? (
+                          <img 
+                            src={s.imageUrl} 
+                            alt={s.name} 
+                            className="w-8 h-8 rounded-lg object-cover border border-border-dark shrink-0"
+                            referrerPolicy="no-referrer"
+                          />
+                        ) : (
+                          <div className="w-8 h-8 rounded-lg bg-bg-dark-600 border border-border-dark flex items-center justify-center font-bold text-text-muted text-[10px] shrink-0">
+                            ✂
+                          </div>
+                        )}
+                        <span>{s.name}</span>
                       </td>
                       <td className="py-3.5 px-4 text-xs text-text-secondary max-w-sm truncate" title={s.desc}>
                         {s.desc || <span className="text-text-muted italic">— Sem descrição</span>}
@@ -92,16 +104,24 @@ export default function Services({ services, onOpenAddModal, onDeleteService }: 
           ) : (
             services.map(s => (
               <div key={s.id} className="bg-bg-dark-800 border border-border-dark rounded-xl p-5 space-y-4 shadow-md flex flex-col">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
+                <div className="flex items-start gap-3">
+                  {s.imageUrl && (
+                    <img 
+                      src={s.imageUrl} 
+                      alt={s.name} 
+                      className="w-14 h-14 rounded-lg object-cover border border-border-dark shrink-0"
+                      referrerPolicy="no-referrer"
+                    />
+                  )}
+                  <div className="min-w-0 flex-1">
                     <h3 className="font-bold text-text-primary text-base leading-snug truncate">{s.name}</h3>
-                    <p className="text-xs text-text-muted mt-2 leading-relaxed italic">
+                    <p className="text-xs text-text-muted mt-1 leading-relaxed italic line-clamp-2">
                       {s.desc || 'Sem descrição cadastrada'}
                     </p>
                   </div>
                   <button
                     onClick={() => onDeleteService(s.id, s.name)}
-                    className="p-3 bg-bg-dark-750 hover:bg-brand-danger-bg/40 border border-border-dark text-brand-danger-text rounded-xl cursor-pointer transition-colors shrink-0 min-w-[44px] min-h-[44px] flex items-center justify-center"
+                    className="p-3 bg-bg-dark-750 hover:bg-brand-danger-bg/40 border border-border-dark text-brand-danger-text rounded-xl cursor-pointer transition-colors shrink-0 min-w-[44px] min-h-[44px] flex items-center justify-center self-start"
                     title="Excluir"
                   >
                     <Trash2 className="w-4 h-4" />

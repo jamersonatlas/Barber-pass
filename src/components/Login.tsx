@@ -318,7 +318,7 @@ export default function Login({ onLoginSuccess, onLoginStart }: LoginProps) {
   };
 
   return (
-    <div className="min-h-screen relative flex flex-col items-center justify-between pb-10 pt-8 px-4 font-sans select-none overflow-y-auto w-full">
+    <div className="h-screen relative flex flex-col items-center justify-between pb-10 pt-8 px-4 font-sans select-none overflow-y-auto w-full">
       {/* Immersive Dark Barber Shop Background Image - Warm Lit Vintage Chair (looks identical to reference) */}
       <div 
         className="absolute inset-0 bg-cover bg-center z-0 transition-opacity duration-1000" 

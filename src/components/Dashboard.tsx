@@ -1,6 +1,6 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { motion } from 'motion/react';
-import { Users, DollarSign, AlertCircle, Scissors, ClipboardList, TrendingUp } from 'lucide-react';
+import { Users, DollarSign, AlertCircle, Scissors, ClipboardList, TrendingUp, Copy, Check } from 'lucide-react';
 import { Client, Cut } from '../types';
 import { fmtMoney, initials, fmtDate } from '../utils';
 
@@ -8,9 +8,25 @@ interface DashboardProps {
   clients: Client[];
   allCuts: Cut[];
   onNavigate: (page: string) => void;
+  user: {
+    uid: string;
+    role: string;
+    displayName?: string;
+    email?: string;
+  };
 }
 
-export default function Dashboard({ clients, allCuts, onNavigate }: DashboardProps) {
+export default function Dashboard({ clients, allCuts, onNavigate, user }: DashboardProps) {
+  const [copiedLink, setCopiedLink] = useState(false);
+
+  const handleCopyLink = () => {
+    const barberParam = user?.role === 'barber' ? `&barbearia=${user.uid}` : '';
+    const link = `${window.location.origin}${window.location.pathname}?agendar=true${barberParam}`;
+    navigator.clipboard.writeText(link);
+    setCopiedLink(true);
+    setTimeout(() => setCopiedLink(false), 2000);
+  };
+
   const totalSubscribers = clients.length;
   const lateClients = clients.filter(c => c.status === 'atrasado');
   const totalLate = lateClients.length;
@@ -60,11 +76,32 @@ export default function Dashboard({ clients, allCuts, onNavigate }: DashboardPro
   return (
     <div className="flex-1 flex flex-col h-full overflow-hidden select-none">
       {/* Topbar */}
-      <div className="px-6 py-4 border-b border-border-dark bg-bg-dark-800 flex items-center justify-between shrink-0">
+      <div className="px-6 py-4 border-b border-border-dark bg-bg-dark-800 flex items-center justify-between gap-4 shrink-0">
         <h1 className="text-base font-semibold text-text-primary">Dashboard</h1>
-        <span className="text-xs text-text-muted capitalize" id="dash-date">
-          {todayText}
-        </span>
+        
+        <div className="flex items-center gap-3">
+          <button
+            onClick={handleCopyLink}
+            className="flex items-center gap-1.5 bg-[#c5a880]/10 hover:bg-[#c5a880]/20 border border-[#c5a880]/35 text-[#c5a880] text-[10px] font-bold uppercase tracking-wider py-1.5 px-3 rounded-lg cursor-pointer transition-all active:scale-95"
+            title="Copiar link para enviar a clientes fora da mensalidade"
+          >
+            {copiedLink ? (
+              <>
+                <Check className="w-3 h-3 stroke-[2.5]" />
+                <span>Link Copiado!</span>
+              </>
+            ) : (
+              <>
+                <Copy className="w-3 h-3" />
+                <span>Copiar Link de Agendamento</span>
+              </>
+            )}
+          </button>
+
+          <span className="text-xs text-text-muted capitalize hidden sm:inline" id="dash-date">
+            {todayText}
+          </span>
+        </div>
       </div>
 
       {/* Content Area */}

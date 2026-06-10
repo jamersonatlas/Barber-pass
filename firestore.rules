@@ -49,5 +49,15 @@ service cloud.firestore {
     match /services/{serviceId} {
       allow read, write: if true;
     }
+
+    // 5. Guest Bookings Collection
+    match /guest_bookings/{bookingId} {
+      allow read, write: if true;
+    }
+
+    // 6. Barber Employees Collection
+    match /barber_employees/{employeeId} {
+      allow read, write: if true;
+    }
   }
 }

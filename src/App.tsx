@@ -34,7 +34,9 @@ import {
   Trash2,
   Menu,
   User as UserIcon,
-  HelpCircle
+  HelpCircle,
+  Calendar,
+  Palette
 } from 'lucide-react';
 
 // Modular Components
@@ -48,12 +50,44 @@ import Payments from './components/Payments';
 import Alerts from './components/Alerts';
 import Barbers from './components/Barbers';
 import ClientPortal from './components/ClientPortal';
+import SimpleBooking from './components/SimpleBooking';
+import Appointments from './components/Appointments';
+import Employees from './components/Employees';
+import Appearance from './components/Appearance';
+import ImageUpload from './components/ImageUpload';
 
 export default function App() {
   // Authentication & Loading
   const [user, setUser] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [seeding, setSeeding] = useState(false);
+  
+  // Public booking/scheduling page trigger
+  const [isBookingMode, setIsBookingMode] = useState(false);
+  const [bookingBarbeariaId, setBookingBarbeariaId] = useState<string | null>(null);
+
+  useEffect(() => {
+    const checkBooking = () => {
+      const params = new URLSearchParams(window.location.search);
+      const hash = window.location.hash;
+      const path = window.location.pathname;
+      const hasAgendar = params.has('agendar');
+      const hasBarbearia = params.has('barbearia');
+      const hasBooking = params.get('booking') === 'true';
+
+      if (hasAgendar || hasBarbearia || hasBooking || hash === '#agendar' || path.includes('agendar')) {
+        setIsBookingMode(true);
+        let bId = params.get('barbearia') || '';
+        if (!bId && hasAgendar && params.get('agendar') !== 'true' && params.get('agendar') !== '') {
+          bId = params.get('agendar') as string;
+        }
+        setBookingBarbeariaId(bId || null);
+      }
+    };
+    checkBooking();
+    window.addEventListener('hashchange', checkBooking);
+    return () => window.removeEventListener('hashchange', checkBooking);
+  }, []);
 
   // Sync State
   const [clients, setClients] = useState<Client[]>([]);
@@ -98,6 +132,7 @@ export default function App() {
   const [sDesc, setSDesc] = useState('');
   const [sValue, setSValue] = useState('');
   const [sPackage, setSPackage] = useState<'Todos' | 'Básico' | 'Premium' | 'VIP'>('Todos');
+  const [sImageUrl, setSImageUrl] = useState('');
 
   const [cutService, setCutService] = useState('');
   const [cutDate, setCutDate] = useState(todayDate());
@@ -559,6 +594,7 @@ export default function App() {
     setSDesc('');
     setSValue('');
     setSPackage('Todos');
+    setSImageUrl('');
     setServiceModalOpen(true);
   };
 
@@ -582,7 +618,8 @@ export default function App() {
         desc: sDesc.trim(),
         value: valNum,
         package: sPackage,
-        ownerId: user.uid
+        ownerId: user.uid,
+        imageUrl: sImageUrl.trim()
       });
 
       triggerToast('Serviço cadastrado com sucesso!');
@@ -710,6 +747,7 @@ export default function App() {
             clients={clients} 
             allCuts={allCuts} 
             onNavigate={navigateToPage} 
+            user={user}
           />
         );
       case 'clients':
@@ -759,6 +797,13 @@ export default function App() {
             onConfirmPayment={(id) => handleToggleStatus(id, 'atrasado')}
           />
         );
+      case 'appearance':
+        return (
+          <Appearance
+            user={user}
+            triggerToast={triggerToast}
+          />
+        );
       case 'barbers':
         return (
           <Barbers
@@ -770,10 +815,49 @@ export default function App() {
             }}
           />
         );
+      case 'appointments':
+        return (
+          <Appointments
+            user={user}
+            triggerToast={triggerToast}
+            openConfirmModal={(title, message, onConfirm) => {
+              setConfirmConfig({ title, message, onConfirm });
+              setConfirmModalOpen(true);
+            }}
+          />
+        );
+      case 'employees':
+        return (
+          <Employees
+            user={user}
+            triggerToast={triggerToast}
+            openConfirmModal={(title, message, onConfirm) => {
+              setConfirmConfig({ title, message, onConfirm });
+              setConfirmModalOpen(true);
+            }}
+          />
+        );
       default:
         return null;
     }
   };
+
+  if (isBookingMode) {
+    return (
+      <SimpleBooking 
+        barbeariaId={bookingBarbeariaId || undefined}
+        onClose={() => {
+          setIsBookingMode(false);
+          const url = new URL(window.location.href);
+          url.searchParams.delete('agendar');
+          url.searchParams.delete('barbearia');
+          url.searchParams.delete('booking');
+          url.hash = '';
+          window.history.replaceState({}, '', url.toString());
+        }} 
+      />
+    );
+  }
 
   if (loading) {
     return (
@@ -890,6 +974,37 @@ export default function App() {
                   <ClipboardList className="w-4 h-4 shrink-0" />
                   <span>Dashboard</span>
                 </button>
+
+                {(user?.role === 'barber' || user?.role === 'admin') && (
+                  <button
+                    onClick={() => navigateToPage('appointments')}
+                    className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-xs font-semibold cursor-pointer transition-all ${
+                      currentPage === 'appointments'
+                        ? 'bg-brand-amber-bg text-brand-amber border border-brand-amber-border/40'
+                        : 'text-text-secondary hover:bg-bg-dark-700 hover:text-text-primary border border-transparent'
+                    }`}
+                  >
+                    <Calendar className="w-4 h-4 shrink-0" />
+                    <span>Agendamentos</span>
+                  </button>
+                )}
+
+                {user?.role === 'barber' && (
+                  <button
+                    onClick={() => {
+                      navigateToPage('employees');
+                      setMobileMenuOpen(false);
+                    }}
+                    className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-xs font-semibold cursor-pointer transition-all ${
+                      currentPage === 'employees'
+                        ? 'bg-brand-amber-bg text-brand-amber border border-brand-amber-border/40'
+                        : 'text-text-secondary hover:bg-bg-dark-700 hover:text-text-primary border border-transparent'
+                    }`}
+                  >
+                    <Scissors className="w-4 h-4 shrink-0" />
+                    <span>Meus Barbeiros</span>
+                  </button>
+                )}
                 
                 {user?.role !== 'admin' && (
                   <button
@@ -954,6 +1069,23 @@ export default function App() {
                       </span>
                     )}
                   </button>
+
+                  {user?.role === 'barber' && (
+                    <button
+                      onClick={() => {
+                        navigateToPage('appearance');
+                        setMobileMenuOpen(false);
+                      }}
+                      className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-xs font-semibold cursor-pointer transition-all ${
+                        currentPage === 'appearance'
+                          ? 'bg-brand-amber-bg text-brand-amber border border-brand-amber-border/40'
+                          : 'text-text-secondary hover:bg-bg-dark-700 hover:text-text-primary border border-transparent'
+                      }`}
+                    >
+                      <Palette className="w-4 h-4 shrink-0" />
+                      <span>Personalizar Tela</span>
+                    </button>
+                  )}
                 </div>
               )}
 
@@ -1055,6 +1187,34 @@ export default function App() {
                 <ClipboardList className="w-4 h-4 shrink-0" />
                 <span>Dashboard</span>
               </button>
+
+              {(user?.role === 'barber' || user?.role === 'admin') && (
+                <button
+                  onClick={() => navigateToPage('appointments')}
+                  className={`nav-item w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-xs font-semibold cursor-pointer transition-all ${
+                    currentPage === 'appointments'
+                      ? 'bg-brand-amber-bg text-brand-amber border border-brand-amber-border/40'
+                      : 'text-text-secondary hover:bg-bg-dark-700 hover:text-text-primary border border-transparent'
+                  }`}
+                >
+                  <Calendar className="w-4 h-4 shrink-0" />
+                  <span>Agendamentos</span>
+                </button>
+              )}
+
+              {user?.role === 'barber' && (
+                <button
+                  onClick={() => navigateToPage('employees')}
+                  className={`nav-item w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-xs font-semibold cursor-pointer transition-all ${
+                    currentPage === 'employees'
+                      ? 'bg-brand-amber-bg text-brand-amber border border-brand-amber-border/40'
+                      : 'text-text-secondary hover:bg-bg-dark-700 hover:text-text-primary border border-transparent'
+                  }`}
+                >
+                  <Scissors className="w-4 h-4 shrink-0" />
+                  <span>Meus Barbeiros</span>
+                </button>
+              )}
               
               {user?.role !== 'admin' && (
                 <button
@@ -1119,6 +1279,20 @@ export default function App() {
                     </span>
                   )}
                 </button>
+
+                {user?.role === 'barber' && (
+                  <button
+                    onClick={() => navigateToPage('appearance')}
+                    className={`nav-item w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-xs font-semibold cursor-pointer transition-all ${
+                      currentPage === 'appearance'
+                        ? 'bg-brand-amber-bg text-brand-amber border border-brand-amber-border/40'
+                        : 'text-text-secondary hover:bg-bg-dark-700 hover:text-text-primary border border-transparent'
+                    }`}
+                  >
+                    <Palette className="w-4 h-4 shrink-0" />
+                    <span>Personalizar Tela</span>
+                  </button>
+                )}
               </div>
             )}
 
@@ -1502,6 +1676,15 @@ export default function App() {
                   onChange={e => setSDesc(e.target.value)}
                 />
               </div>
+
+              <ImageUpload
+                label="Foto Exemplo do Serviço (Opcional)"
+                value={sImageUrl}
+                onChange={(base64) => setSImageUrl(base64)}
+                onClear={() => setSImageUrl('')}
+                maxDimensions={{ width: 400, height: 400 }}
+                aspectRatioLabel="Proporção 1:1"
+              />
 
               <div className="grid grid-cols-2 gap-3">
                 <div className="flex flex-col gap-2">

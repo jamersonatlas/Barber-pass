@@ -107,9 +107,9 @@ export default function ClientPortal({ clientId, onLogout }: ClientPortalProps) 
   const isLate = client.status === 'atrasado';
 
   return (
-    <div className="min-h-screen bg-bg-dark-900 text-text-primary flex flex-col font-sans select-none animate-fade-in">
+    <div className="h-screen w-full overflow-hidden bg-bg-dark-900 text-text-primary flex flex-col font-sans select-none animate-fade-in">
       {/* Top Header Navigation */}
-      <header className="px-4 md:px-8 py-4 border-b border-border-dark bg-bg-dark-800 flex items-center justify-between shadow">
+      <header className="px-4 md:px-8 py-4 border-b border-border-dark bg-bg-dark-800 flex items-center justify-between shadow shrink-0">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-full bg-brand-amber-bg border border-brand-amber-border flex items-center justify-center font-bold text-brand-amber text-sm shrink-0">
             {initials(client.name)}
@@ -134,7 +134,7 @@ export default function ClientPortal({ clientId, onLogout }: ClientPortalProps) 
       </header>
 
       {/* Main Container Area */}
-      <main className="flex-1 max-w-4xl w-full mx-auto p-4 md:p-8 space-y-6">
+      <main className="flex-1 overflow-y-auto max-w-4xl w-full mx-auto p-4 md:p-8 space-y-6 touch-pan-y">
         
         {/* Status Warning Banner */}
         {isLate && (
@@ -207,7 +207,7 @@ export default function ClientPortal({ clientId, onLogout }: ClientPortalProps) 
             {totalSlots > 0 && (
               <div className="flex items-center gap-4.5 bg-bg-dark-750 border border-border-dark py-3 px-4 rounded-xl shrink-0">
                 <div className="w-16 h-16 relative flex items-center justify-center shrink-0">
-                  <svg className="w-full h-full transform -rotate-90">
+                  <svg className="w-full h-full transform -rotate-90" viewBox="0 0 64 64">
                     <circle cx="32" cy="32" r="26" fill="transparent" stroke="#1d1e22" strokeWidth="4.5" />
                     <circle
                       cx="32"

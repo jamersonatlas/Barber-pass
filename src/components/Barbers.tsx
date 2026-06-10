@@ -47,6 +47,7 @@ export default function Barbers({ onBack, triggerToast, openConfirmModal }: Barb
   const [bEmail, setBEmail] = useState('');
   const [bUsername, setBUsername] = useState('');
   const [bPassword, setBPassword] = useState('');
+  const [bAvatarUrl, setBAvatarUrl] = useState('');
 
   // Sync barbers in real-time
   useEffect(() => {
@@ -74,6 +75,7 @@ export default function Barbers({ onBack, triggerToast, openConfirmModal }: Barb
     setBEmail('');
     setBUsername('');
     setBPassword('');
+    setBAvatarUrl('');
     setModalOpen(true);
   };
 
@@ -84,6 +86,7 @@ export default function Barbers({ onBack, triggerToast, openConfirmModal }: Barb
     setBEmail(barber.email || '');
     setBUsername(barber.username);
     setBPassword(barber.password);
+    setBAvatarUrl(barber.avatarUrl || '');
     setModalOpen(true);
   };
 
@@ -114,6 +117,7 @@ export default function Barbers({ onBack, triggerToast, openConfirmModal }: Barb
           email: bEmail.trim(),
           username: bUsername.trim().toLowerCase(),
           password: bPassword.trim(),
+          avatarUrl: bAvatarUrl.trim(),
         });
         triggerToast('Perfil de barbeiro atualizado.');
       } else {
@@ -127,6 +131,7 @@ export default function Barbers({ onBack, triggerToast, openConfirmModal }: Barb
           email: bEmail.trim(),
           username: bUsername.trim().toLowerCase(),
           password: bPassword.trim(),
+          avatarUrl: bAvatarUrl.trim(),
           createdAt: new Date().toISOString()
         });
         triggerToast('Novo barbeiro adicionado com sucesso!');
@@ -232,9 +237,18 @@ export default function Barbers({ onBack, triggerToast, openConfirmModal }: Barb
                 filteredBarbers.map((b) => (
                   <tr key={b.id} className="hover:bg-bg-dark-750/30 transition-colors">
                     <td className="py-4 px-5 flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-full bg-brand-amber-bg border border-brand-amber-border flex items-center justify-center font-bold text-brand-amber text-xs shrink-0 shadow-sm">
-                        {initials(b.name)}
-                      </div>
+                      {b.avatarUrl ? (
+                        <img 
+                          src={b.avatarUrl} 
+                          alt={b.name} 
+                          referrerPolicy="no-referrer" 
+                          className="w-10 h-10 rounded-full object-cover border border-brand-amber-border shrink-0 shadow-sm" 
+                        />
+                      ) : (
+                        <div className="w-10 h-10 rounded-full bg-brand-amber-bg border border-brand-amber-border flex items-center justify-center font-bold text-brand-amber text-xs shrink-0 shadow-sm">
+                          {initials(b.name)}
+                        </div>
+                      )}
                       <span className="font-bold text-text-primary truncate max-w-[170px]">{b.name}</span>
                     </td>
                     <td className="py-4 px-4 text-text-secondary select-all font-mono font-bold text-xs bg-bg-dark-900/30 px-2.5 py-1 rounded w-max">
@@ -292,9 +306,18 @@ export default function Barbers({ onBack, triggerToast, openConfirmModal }: Barb
               <div key={b.id} className="bg-bg-dark-800 border border-border-dark rounded-xl p-4.5 space-y-4 shadow-md flex flex-col justify-between">
                 <div className="flex items-center justify-between gap-3">
                   <div className="flex items-center gap-3">
-                    <div className="w-11 h-11 rounded-full bg-brand-amber-bg border border-brand-amber-border flex items-center justify-center font-bold text-brand-amber text-sm shrink-0">
-                      {initials(b.name)}
-                    </div>
+                    {b.avatarUrl ? (
+                      <img 
+                        src={b.avatarUrl} 
+                        alt={b.name} 
+                        referrerPolicy="no-referrer" 
+                        className="w-11 h-11 rounded-full object-cover border border-brand-amber-border shrink-0 shadow-sm" 
+                      />
+                    ) : (
+                      <div className="w-11 h-11 rounded-full bg-brand-amber-bg border border-brand-amber-border flex items-center justify-center font-bold text-brand-amber text-sm shrink-0">
+                        {initials(b.name)}
+                      </div>
+                    )}
                     <div>
                       <h3 className="font-bold text-text-primary text-base leading-none">{b.name}</h3>
                       <span className="text-[10px] uppercase text-text-muted tracking-wider font-semibold block mt-1">Conta de Acesso</span>
@@ -412,6 +435,17 @@ export default function Barbers({ onBack, triggerToast, openConfirmModal }: Barb
                   placeholder="barbeiro@email.com"
                   value={bEmail}
                   onChange={(e) => setBEmail(e.target.value)}
+                  className="w-full bg-bg-dark-900 border border-border-dark text-text-primary rounded-xl px-3.5 py-2.5 text-sm focus:outline-none focus:border-brand-amber transition-colors"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-text-secondary">URL da Foto de Perfil (Opcional)</label>
+                <input
+                  type="url"
+                  placeholder="https://exemplo.com/foto-barbeiro.jpg"
+                  value={bAvatarUrl}
+                  onChange={(e) => setBAvatarUrl(e.target.value)}
                   className="w-full bg-bg-dark-900 border border-border-dark text-text-primary rounded-xl px-3.5 py-2.5 text-sm focus:outline-none focus:border-brand-amber transition-colors"
                 />
               </div>
