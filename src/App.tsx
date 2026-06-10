@@ -36,7 +36,8 @@ import {
   User as UserIcon,
   HelpCircle,
   Calendar,
-  Palette
+  Palette,
+  Clock
 } from 'lucide-react';
 
 // Modular Components
@@ -54,6 +55,7 @@ import SimpleBooking from './components/SimpleBooking';
 import Appointments from './components/Appointments';
 import Employees from './components/Employees';
 import Appearance from './components/Appearance';
+import AgendaConfig from './components/AgendaConfig';
 import ImageUpload from './components/ImageUpload';
 
 export default function App() {
@@ -874,6 +876,13 @@ export default function App() {
             onConfirmPayment={(id) => handleToggleStatus(id, 'atrasado')}
           />
         );
+      case 'agenda':
+        return (
+          <AgendaConfig
+            user={user}
+            triggerToast={triggerToast}
+          />
+        );
       case 'appearance':
         return (
           <Appearance
@@ -1154,6 +1163,23 @@ export default function App() {
                   {user?.role === 'barber' && (
                     <button
                       onClick={() => {
+                        navigateToPage('agenda');
+                        setMobileMenuOpen(false);
+                      }}
+                      className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-xs font-semibold cursor-pointer transition-all ${
+                        currentPage === 'agenda'
+                          ? 'bg-brand-amber-bg text-brand-amber border border-brand-amber-border/40'
+                          : 'text-text-secondary hover:bg-bg-dark-700 hover:text-text-primary border border-transparent'
+                      }`}
+                    >
+                      <Clock className="w-4 h-4 shrink-0" />
+                      <span>Configurar Agenda</span>
+                    </button>
+                  )}
+
+                  {user?.role === 'barber' && (
+                    <button
+                      onClick={() => {
                         navigateToPage('appearance');
                         setMobileMenuOpen(false);
                       }}
@@ -1360,6 +1386,20 @@ export default function App() {
                     </span>
                   )}
                 </button>
+
+                {user?.role === 'barber' && (
+                  <button
+                    onClick={() => navigateToPage('agenda')}
+                    className={`nav-item w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-xs font-semibold cursor-pointer transition-all ${
+                      currentPage === 'agenda'
+                        ? 'bg-brand-amber-bg text-brand-amber border border-brand-amber-border/40'
+                        : 'text-text-secondary hover:bg-bg-dark-700 hover:text-text-primary border border-transparent'
+                    }`}
+                  >
+                    <Clock className="w-4 h-4 shrink-0" />
+                    <span>Configurar Agenda</span>
+                  </button>
+                )}
 
                 {user?.role === 'barber' && (
                   <button

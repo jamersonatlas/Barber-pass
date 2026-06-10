@@ -13,6 +13,7 @@ import {
 import { db, handleFirestoreError, OperationType } from '../firebase';
 import { Barber } from '../types';
 import { initials } from '../utils';
+import ImageUpload from './ImageUpload';
 import { 
   Scissors, 
   Plus, 
@@ -439,16 +440,14 @@ export default function Barbers({ onBack, triggerToast, openConfirmModal }: Barb
                 />
               </div>
 
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-text-secondary">URL da Foto de Perfil (Opcional)</label>
-                <input
-                  type="url"
-                  placeholder="https://exemplo.com/foto-barbeiro.jpg"
-                  value={bAvatarUrl}
-                  onChange={(e) => setBAvatarUrl(e.target.value)}
-                  className="w-full bg-bg-dark-900 border border-border-dark text-text-primary rounded-xl px-3.5 py-2.5 text-sm focus:outline-none focus:border-brand-amber transition-colors"
-                />
-              </div>
+              <ImageUpload
+                label="Foto de Perfil do Barbeiro (Opcional)"
+                value={bAvatarUrl}
+                onChange={(base64) => setBAvatarUrl(base64)}
+                onClear={() => setBAvatarUrl('')}
+                maxDimensions={{ width: 400, height: 400 }}
+                aspectRatioLabel="Proporção 1:1"
+              />
 
               <p className="text-[10px] text-text-muted italic">
                 * Campos obrigatórios para habilitar o login.

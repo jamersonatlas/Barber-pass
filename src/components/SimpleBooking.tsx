@@ -7,7 +7,8 @@ import {
   query, 
   where,
   getDocs,
-  doc
+  doc,
+  deleteDoc
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { Barber, Service } from '../types';
@@ -23,7 +24,10 @@ import {
   ChevronRight,
   Sparkles,
   Instagram,
-  MapPin
+  MapPin,
+  Search,
+  Trash2,
+  MessageSquare
 } from 'lucide-react';
 
 const BARBER_FALLBACK_PHOTOS = [
@@ -59,6 +63,15 @@ export default function SimpleBooking({ onClose, barbeariaId }: SimpleBookingPro
   const [bookingFinished, setBookingFinished] = useState(false);
   const [finishedDetails, setFinishedDetails] = useState<any>(null);
   const [bookingLoading, setBookingLoading] = useState(false);
+
+  // Client cancellation & booking tracking state
+  const [activeTab, setActiveTab] = useState<'booking' | 'my-bookings'>('booking');
+  const [submittingError, setSubmittingError] = useState<string | null>(null);
+  const [searchPhone, setSearchPhone] = useState('');
+  const [allBarbeariaBookings, setAllBarbeariaBookings] = useState<any[]>([]);
+  const [cancelingId, setCancelingId] = useState<string | null>(null);
+  const [cancelError, setCancelError] = useState<string | null>(null);
+  const [cancelSuccess, setCancelSuccess] = useState<string | null>(null);
 
   // Sync barbearia info, professionals, and overall services
   useEffect(() => {
@@ -127,6 +140,26 @@ export default function SimpleBooking({ onClose, barbeariaId }: SimpleBookingPro
     };
   }, [barbeariaId]);
 
+  // Sync all guest bookings of this barbearia to support active tracking and cancellations
+  useEffect(() => {
+    const targetId = barbeariaId || (selectedBarber ? selectedBarber.id : null);
+    if (!targetId) return;
+
+    const refBookings = collection(db, 'guest_bookings');
+    const unsub = onSnapshot(refBookings, (snap) => {
+      const list: any[] = [];
+      snap.forEach(docSnap => {
+        const d = docSnap.data();
+        if (d.barbeariaId === targetId) {
+          list.push({ id: docSnap.id, ...d });
+        }
+      });
+      setAllBarbeariaBookings(list);
+    }, (err) => console.error('Error syncing all barbearia bookings:', err));
+
+    return () => unsub();
+  }, [barbeariaId, selectedBarber]);
+
   // Sync booked slots for selected barber on real-time to avoid duplicate/clash
   useEffect(() => {
     if (!selectedBarber) return;
@@ -146,17 +179,25 @@ export default function SimpleBooking({ onClose, barbeariaId }: SimpleBookingPro
     return () => unsubBookings();
   }, [selectedBarber]);
 
-  // Generates next 7 days for quick choosing
+  // Generates next available days for quick choosing, aligned with barber's weekly schedule settings
   const getNext7Days = () => {
     const days = [];
     const today = new Date();
     const weekdayNames = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
     const monthNames = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
 
-    for (let i = 0; i < 9; i++) {
+    // Custom weekly active days configuration
+    const activeDays = barbeariaInfo?.scheduleSettings?.workingDays ?? [1, 2, 3, 4, 5, 6];
+
+    // Read up to 21 future calendar days to find active workdays
+    for (let i = 0; i < 21; i++) {
       const d = new Date();
       d.setDate(today.getDate() + i);
       
+      if (!activeDays.includes(d.getDay())) {
+        continue;
+      }
+
       const yyyy = d.getFullYear();
       const mm = String(d.getMonth() + 1).padStart(2, '0');
       const dd = String(d.getDate()).padStart(2, '0');
@@ -168,14 +209,23 @@ export default function SimpleBooking({ onClose, barbeariaId }: SimpleBookingPro
         weekday: weekdayNames[d.getDay()],
         month: monthNames[d.getMonth()]
       });
+
+      if (days.length >= 9) break;
     }
     return days;
   };
 
-  const daysList = getNext7Days();
+  const daysList = getNext7Days().length > 0 ? getNext7Days() : [
+    {
+      dateStr: new Date().toISOString().split('T')[0],
+      dayNum: new Date().getDate(),
+      weekday: ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'][new Date().getDay()],
+      month: ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'][new Date().getMonth()]
+    }
+  ];
 
   // List of professional work schedules
-  const businessHours = [
+  const businessHours = barbeariaInfo?.scheduleSettings?.workingHours ?? [
     '08:00', '08:30', '09:00', '09:30', '10:00', '10:30', '11:00', '11:30', 
     '13:00', '13:30', '14:00', '14:30', '15:00', '15:30', '16:00', '16:30',
     '17:00', '17:30', '18:00', '18:30', '19:00', '19:30'
@@ -241,8 +291,10 @@ export default function SimpleBooking({ onClose, barbeariaId }: SimpleBookingPro
     }
 
     setBookingLoading(true);
+    setSubmittingError(null);
 
     try {
+      const parsedValue = Number(selectedService.value) || 0;
       const responseDetails = {
         barbeariaId: barbeariaId || selectedBarber.id,
         barberId: selectedBarber.id,
@@ -250,7 +302,7 @@ export default function SimpleBooking({ onClose, barbeariaId }: SimpleBookingPro
         barberPhone: barbeariaInfo?.phone || selectedBarber.phone || '',
         serviceId: selectedService.id,
         serviceName: selectedService.name,
-        serviceValue: selectedService.value,
+        serviceValue: parsedValue,
         date: selectedDate,
         time: selectedTime,
         clientName: clientName.trim(),
@@ -264,8 +316,9 @@ export default function SimpleBooking({ onClose, barbeariaId }: SimpleBookingPro
 
       setFinishedDetails(responseDetails);
       setBookingFinished(true);
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error reserving guest slot:', err);
+      setSubmittingError('Falha ao salvar seu agendamento no banco de dados. Por favor, tente novamente ou contate-nos. Detalhes: ' + (err.message || err));
     } finally {
       setBookingLoading(false);
     }
@@ -455,8 +508,201 @@ export default function SimpleBooking({ onClose, barbeariaId }: SimpleBookingPro
       {/* Active Step Panel Body */}
       <main className="flex-1 overflow-y-auto p-5 md:p-8 max-w-2xl w-full mx-auto space-y-6">
         
-        {/* STEP 1: SELECT BARBER */}
+        {/* Tab Selection Switcher */}
         {currentStep === 1 && (
+          <div className="flex bg-bg-dark-800 p-1 rounded-xl border border-border-dark/60">
+            <button
+              onClick={() => setActiveTab('booking')}
+              className={`flex-1 py-2.5 rounded-lg text-xs font-bold transition-all text-center cursor-pointer ${
+                activeTab === 'booking'
+                  ? 'bg-brand-amber text-[#1a0e00] shadow font-extrabold'
+                  : 'text-text-secondary hover:text-text-primary'
+              }`}
+            >
+              Agendar Horário
+            </button>
+            <button
+              onClick={() => setActiveTab('my-bookings')}
+              className={`flex-1 py-2.5 rounded-lg text-xs font-bold transition-all text-center cursor-pointer ${
+                activeTab === 'my-bookings'
+                  ? 'bg-brand-amber text-[#1a0e00] shadow font-extrabold'
+                  : 'text-text-secondary hover:text-text-primary'
+              }`}
+            >
+              Meus Agendamentos
+            </button>
+          </div>
+        )}
+
+        {/* TAB 2: MY BOOKINGS TRACKING & CANCELLATION */}
+        {activeTab === 'my-bookings' && currentStep === 1 && (
+          <div className="space-y-5 animate-fade-in font-sans">
+            {/* Header / Intro */}
+            <div className="text-center sm:text-left space-y-1">
+              <h3 className="text-base font-bold text-text-primary">Consultar e Cancelar Reservas</h3>
+              <p className="text-xs text-text-secondary">
+                Digite seu número de telefone abaixo para buscar seus agendamentos nesta barbearia.
+              </p>
+            </div>
+
+            {/* Input Search Block */}
+            <div className="bg-bg-dark-800 border border-border-dark p-5 rounded-2xl flex flex-col sm:flex-row gap-3 shadow-lg">
+              <div className="relative flex-1">
+                <Phone className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-muted" />
+                <input
+                  type="tel"
+                  placeholder="Seu telefone (DDD + Número)"
+                  value={searchPhone}
+                  onChange={(e) => {
+                    setSearchPhone(e.target.value);
+                    setCancelError(null);
+                    setCancelSuccess(null);
+                  }}
+                  className="w-full bg-bg-dark-850 hover:bg-bg-dark-750 text-text-primary border border-border-dark rounded-xl pl-9 pr-4 py-3 text-xs font-semibold focus:outline-none focus:border-brand-amber transition-all"
+                />
+              </div>
+              <button
+                type="button"
+                className="bg-brand-amber hover:bg-brand-amber-hover text-[#1a0e00] font-sans font-bold text-xs py-3 px-6 rounded-xl flex items-center justify-center gap-1.5 transition-all shadow-md cursor-pointer active:scale-95 shrink-0"
+              >
+                <Search className="w-4 h-4" />
+                <span>Atualizar</span>
+              </button>
+            </div>
+
+            {/* Warning and Success notices */}
+            {cancelError && (
+              <div className="bg-brand-danger-text/10 border border-brand-danger-border/30 text-brand-danger-text p-4 rounded-xl text-xs font-medium animate-fade-in">
+                {cancelError}
+              </div>
+            )}
+            {cancelSuccess && (
+              <div className="bg-emerald-600/15 border border-emerald-500/30 text-emerald-400 p-4 rounded-xl text-xs font-medium animate-fade-in flex items-center gap-2">
+                <CheckCircle className="w-4 h-4 text-emerald-400" />
+                <span>{cancelSuccess}</span>
+              </div>
+            )}
+
+            {/* Booking list results */}
+            <div className="space-y-3">
+              {(() => {
+                const cleanQuery = searchPhone.replace(/\D/g, '');
+                
+                if (!cleanQuery) {
+                  return (
+                    <div className="bg-bg-dark-800 border border-border-dark/50 rounded-2xl p-6 text-center text-xs text-text-muted">
+                      Digite o número do seu celular acima para carregar sua agenda.
+                    </div>
+                  );
+                }
+
+                // filter allBarbeariaBookings by cleaned phone
+                const filtered = allBarbeariaBookings.filter(b => b.clientPhone && b.clientPhone.replace(/\D/g, '') === cleanQuery);
+
+                if (filtered.length === 0) {
+                  return (
+                    <div className="bg-bg-dark-800 border border-border-dark/50 rounded-2xl p-6 text-center text-xs text-text-muted">
+                      Nenhum agendamento ativo encontrado para este telefone.
+                    </div>
+                  );
+                }
+
+                return (
+                  <div className="space-y-3">
+                    <p className="text-[10px] uppercase font-bold text-text-muted tracking-wider px-1">
+                      Agendamentos ativos encontrados: {filtered.length}
+                    </p>
+                    
+                    {filtered.map(booking => {
+                      // Check cancellation constraint (2 hours policy)
+                      const [year, month, day] = booking.date.split('-').map(Number);
+                      const [hour, minute] = booking.time.split(':').map(Number);
+                      const bookingDate = new Date(year, month - 1, day, hour, minute, 0);
+                      const now = new Date();
+                      const diffMs = bookingDate.getTime() - now.getTime();
+                      const diffHours = diffMs / (1000 * 60 * 60);
+                      const canSelfCancel = diffHours >= 2;
+
+                      const formattedDate = booking.date.split('-').reverse().join('/');
+
+                      return (
+                        <div key={booking.id} className="bg-bg-dark-800 border border-border-dark rounded-2xl p-4 flex flex-col md:flex-row md:items-center md:justify-between gap-4 hover:border-border-dark-hover transition-colors shadow-lg">
+                          <div className="grow space-y-1">
+                            <div className="flex items-center gap-2.5">
+                              <span className="text-sm font-bold text-text-primary">{booking.serviceName}</span>
+                              <span className="bg-[#c5a880]/15 text-[#c5a880] text-[10px] font-bold px-2 py-0.5 rounded-full">
+                                {booking.time}
+                              </span>
+                            </div>
+                            
+                            <div className="text-[11px] text-text-secondary space-y-0.5">
+                              <p>Data: <strong className="text-text-primary">{formattedDate}</strong></p>
+                              <p>Profissional: <strong className="text-text-primary">{booking.barberName}</strong></p>
+                              <p>Cliente: <strong className="text-text-primary">{booking.clientName}</strong></p>
+                            </div>
+                          </div>
+
+                          <div className="flex flex-col gap-2 pt-2.5 md:pt-0 border-t md:border-t-0 border-border-dark/40 shrink-0">
+                            {canSelfCancel ? (
+                              <button
+                                type="button"
+                                disabled={cancelingId === booking.id}
+                                onClick={async () => {
+                                  if (!window.confirm(`Tem certeza de que deseja cancelar seu agendamento de ${booking.serviceName} no dia ${formattedDate} às ${booking.time}?`)) {
+                                    return;
+                                  }
+                                  setCancelError(null);
+                                  setCancelSuccess(null);
+                                  setCancelingId(booking.id);
+                                  try {
+                                    const docRef = doc(db, 'guest_bookings', booking.id);
+                                    await deleteDoc(docRef);
+                                    setCancelSuccess(`Agendamento de ${booking.serviceName} para o dia ${formattedDate} foi cancelado com sucesso.`);
+                                  } catch (error) {
+                                    console.error('Error canceling client booking:', error);
+                                    setCancelError('Falha ao cancelar o agendamento no banco de dados. Tente mais tarde.');
+                                  } finally {
+                                    setCancelingId(null);
+                                  }
+                                }}
+                                className="bg-brand-danger hover:bg-brand-danger-hover text-white font-bold text-[11px] py-2 px-4 rounded-xl flex items-center justify-center gap-1.5 cursor-pointer transition-all active:scale-95"
+                              >
+                                {cancelingId === booking.id ? (
+                                  <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                                ) : (
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                )}
+                                <span>Cancelar Reserva</span>
+                              </button>
+                            ) : (
+                              <div className="flex flex-col gap-1.5 items-stretch md:items-end w-full">
+                                <span className="text-[10px] text-brand-danger-text font-bold uppercase text-center md:text-right bg-brand-danger-bg p-1.5 rounded-lg border border-brand-danger-border/30">
+                                  Bloqueado (menos de 2h restante)
+                                </span>
+                                <a
+                                  href={`https://wa.me/${formatWhatsAppNumber(booking.barberPhone || '')}?text=Olá!%20Gostaria%20de%20solicitar%20o%20cancelamento%20ou%20remarcação%20do%20meu%20agendamento%20de%20${encodeURIComponent(booking.serviceName)}%20no%20dia%20${formattedDate}%20às%23${booking.time}.%20Meu%20nome%20é%20${encodeURIComponent(booking.clientName)}.`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[10px] py-1.5 px-3 rounded-lg flex items-center justify-center gap-1.5 text-center transition-all align-middle"
+                                >
+                                  <MessageSquare className="w-3.5 h-3.5" />
+                                  <span>Contatar via WhatsApp</span>
+                                </a>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
+            </div>
+          </div>
+        )}
+
+        {/* STEP 1: SELECT BARBER */}
+        {currentStep === 1 && activeTab === 'booking' && (
           <div className="space-y-4 font-sans">
             {/* Custom Barbearia branding header */}
             {barbeariaInfo && (
@@ -663,7 +909,7 @@ export default function SimpleBooking({ onClose, barbeariaId }: SimpleBookingPro
 
                       <div className="text-right shrink-0">
                         <span className="text-brand-amber font-mono font-bold text-sm block">
-                          R$ {s.value.toFixed(2).replace('.', ',')}
+                          R$ {(s.value ? Number(s.value) : 0).toFixed(2).replace('.', ',')}
                         </span>
                         {isSelected && (
                           <span className="text-[10px] text-[#c5a880] font-bold uppercase tracking-wide block mt-1.5 font-sans">Selecionado</span>
@@ -687,7 +933,7 @@ export default function SimpleBooking({ onClose, barbeariaId }: SimpleBookingPro
                 </div>
                 <div>
                   <h3 className="text-xs font-bold text-white uppercase tracking-wider">Agendamento de Horário</h3>
-                  <p className="text-[10px] text-[#c5a880] font-bold mt-0.5">{selectedService.name} — R$ {selectedService.value.toFixed(2).replace('.', ',')}</p>
+                  <p className="text-[10px] text-[#c5a880] font-bold mt-0.5">{selectedService.name} — R$ {(selectedService.value ? Number(selectedService.value) : 0).toFixed(2).replace('.', ',')}</p>
                 </div>
               </div>
             </div>
@@ -804,7 +1050,7 @@ export default function SimpleBooking({ onClose, barbeariaId }: SimpleBookingPro
           <form onSubmit={handleCreateBooking} className="space-y-5">
             <div className="bg-bg-dark-850 p-4 rounded-xl border border-border-dark text-xs space-y-2 font-sans">
               <h4 className="font-bold text-white uppercase tracking-wider mb-2 text-[#c5a880]">Confirmação de Reserva Extrema</h4>
-              <p className="text-text-secondary">Você está reservando o serviço <b>{selectedService.name}</b> de <b>R$ {selectedService.value.toFixed(2).replace('.', ',')}</b> com <b>{selectedBarber.name}</b> no dia <b>{selectedDate.split('-').reverse().join('/')}</b> às <b className="text-[#c5a880]">{selectedTime}</b>.</p>
+              <p className="text-text-secondary">Você está reservando o serviço <b>{selectedService.name}</b> de <b>R$ {(selectedService.value ? Number(selectedService.value) : 0).toFixed(2).replace('.', ',')}</b> com <b>{selectedBarber.name}</b> no dia <b>{selectedDate.split('-').reverse().join('/')}</b> às <b className="text-[#c5a880]">{selectedTime}</b>.</p>
             </div>
 
             <div className="space-y-4">
@@ -838,6 +1084,12 @@ export default function SimpleBooking({ onClose, barbeariaId }: SimpleBookingPro
                 />
               </div>
             </div>
+
+            {submittingError && (
+              <div className="bg-brand-danger-text/10 border border-brand-danger-border/30 text-brand-danger-text p-4 rounded-xl text-xs font-medium animate-fade-in text-center leading-normal">
+                ⚠️ {submittingError}
+              </div>
+            )}
 
             <p className="text-[10px] text-text-muted italic pl-1 leading-normal">
               * Ao clicar em agendar, o horário será reservado no painel do barbeiro. Em seguida você poderá mandar mensagem direta via WhatsApp com apenas um clique!
