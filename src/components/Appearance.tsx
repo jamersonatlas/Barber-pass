@@ -24,9 +24,10 @@ interface AppearanceProps {
     role: 'admin' | 'barber' | 'client';
   };
   triggerToast: (msg: string) => void;
+  onPreviewBooking?: () => void;
 }
 
-export default function Appearance({ user, triggerToast }: AppearanceProps) {
+export default function Appearance({ user, triggerToast, onPreviewBooking }: AppearanceProps) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
@@ -93,7 +94,7 @@ export default function Appearance({ user, triggerToast }: AppearanceProps) {
   return (
     <div className="flex-1 flex flex-col h-full overflow-hidden select-none animate-fade-in font-sans text-text-primary">
       {/* Header Bar */}
-      <div className="px-6 py-4.5 border-b border-border-dark bg-bg-dark-800 flex items-center justify-between shrink-0 select-none shadow">
+      <div className="px-6 py-4.5 border-b border-border-dark bg-bg-dark-800 flex items-center justify-between shrink-0 select-none shadow gap-4">
         <div>
           <h2 className="font-display font-medium text-xl md:text-2xl text-text-primary flex items-center gap-2">
             <span>🎨</span>
@@ -104,15 +105,29 @@ export default function Appearance({ user, triggerToast }: AppearanceProps) {
           </p>
         </div>
 
-        <a 
-          href={bookingLink} 
-          target="_blank" 
-          rel="noopener noreferrer"
-          className="bg-bg-dark-700 hover:bg-bg-dark-650 border border-border-dark text-text-primary text-xs font-semibold py-2 px-3 rounded-xl flex items-center gap-1.5 transition-colors cursor-pointer"
-        >
-          <span>Ver seu link físico</span>
-          <ExternalLink className="w-3.5 h-3.5" />
-        </a>
+        <div className="flex items-center gap-2">
+          {onPreviewBooking && (
+            <button
+              onClick={onPreviewBooking}
+              className="bg-[#c5a880] hover:bg-[#c5a880]/90 text-black text-xs font-bold py-2.5 px-3.5 sm:px-4 rounded-xl flex items-center gap-1.5 transition-all cursor-pointer shadow active:scale-95 shrink-0"
+              title="Testar agendamento diretamente na mesma tela sem abrir nova aba"
+            >
+              <Eye className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Testar Sistema</span>
+              <span className="sm:hidden">Testar</span>
+            </button>
+          )}
+
+          <a 
+            href={bookingLink} 
+            target="_blank" 
+            rel="noopener noreferrer"
+            className="bg-bg-dark-700 hover:bg-bg-dark-650 border border-border-dark text-text-primary text-xs font-semibold py-2 px-3 rounded-xl flex items-center gap-1.5 transition-colors cursor-pointer shrink-0"
+          >
+            <span className="hidden sm:inline">Abrir Nova Guia</span>
+            <ExternalLink className="w-3.5 h-3.5" />
+          </a>
+        </div>
       </div>
 
       {/* Main Content Areas */}

@@ -114,10 +114,16 @@ export default function SimpleBooking({ onClose, barbeariaId }: SimpleBookingPro
       setLoading(false);
     });
 
+    // Safeguard timeout for mobile / slow networks
+    const fallbackTimer = setTimeout(() => {
+      setLoading(false);
+    }, 3500);
+
     return () => {
       unsubBarbearia();
       unsubBarbers();
       unsubServices();
+      clearTimeout(fallbackTimer);
     };
   }, [barbeariaId]);
 
@@ -287,7 +293,25 @@ export default function SimpleBooking({ onClose, barbeariaId }: SimpleBookingPro
       ? `https://api.whatsapp.com/send?phone=${cleanPhone}&text=${encodedText}`
       : `https://api.whatsapp.com/send?text=${encodedText}`;
 
-    window.open(whatsappUrl, '_blank');
+    try {
+      const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+      if (isMobile) {
+        const mobileUrl = cleanPhone
+          ? `whatsapp://send?phone=${cleanPhone}&text=${encodedText}`
+          : `whatsapp://send?text=${encodedText}`;
+        window.location.href = mobileUrl;
+        setTimeout(() => {
+          window.location.href = whatsappUrl;
+        }, 1200);
+      } else {
+        const opened = window.open(whatsappUrl, '_blank');
+        if (!opened) {
+          window.location.assign(whatsappUrl);
+        }
+      }
+    } catch (e) {
+      window.location.href = whatsappUrl;
+    }
   };
 
   if (loading) {

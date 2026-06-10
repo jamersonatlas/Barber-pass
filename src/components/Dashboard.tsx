@@ -22,7 +22,34 @@ export default function Dashboard({ clients, allCuts, onNavigate, user }: Dashbo
   const handleCopyLink = () => {
     const barberParam = user?.role === 'barber' ? `&barbearia=${user.uid}` : '';
     const link = `${window.location.origin}${window.location.pathname}?agendar=true${barberParam}`;
-    navigator.clipboard.writeText(link);
+    
+    let copySuccess = false;
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(link);
+        copySuccess = true;
+      }
+    } catch (e) {
+      console.warn("Navigator clipboard failed, using fallback:", e);
+    }
+
+    if (!copySuccess) {
+      try {
+        const textArea = document.createElement("textarea");
+        textArea.value = link;
+        textArea.style.top = "0";
+        textArea.style.left = "0";
+        textArea.style.position = "fixed";
+        document.body.appendChild(textArea);
+        textArea.focus();
+        textArea.select();
+        copySuccess = document.execCommand('copy');
+        document.body.removeChild(textArea);
+      } catch (err) {
+        console.error("Fallback copy failed:", err);
+      }
+    }
+
     setCopiedLink(true);
     setTimeout(() => setCopiedLink(false), 2000);
   };

@@ -85,7 +85,34 @@ export default function Appointments({ user, triggerToast, openConfirmModal }: A
   const handleCopyLink = () => {
     const barberParam = user.role === 'barber' ? `&barbearia=${user.uid}` : '';
     const bookingLink = `${window.location.origin}${window.location.pathname}?agendar=true${barberParam}`;
-    navigator.clipboard.writeText(bookingLink);
+    
+    let copySuccess = false;
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(bookingLink);
+        copySuccess = true;
+      }
+    } catch (e) {
+      console.warn("Navigator clipboard failed, using fallback:", e);
+    }
+
+    if (!copySuccess) {
+      try {
+        const textArea = document.createElement("textarea");
+        textArea.value = bookingLink;
+        textArea.style.top = "0";
+        textArea.style.left = "0";
+        textArea.style.position = "fixed";
+        document.body.appendChild(textArea);
+        textArea.focus();
+        textArea.select();
+        copySuccess = document.execCommand('copy');
+        document.body.removeChild(textArea);
+      } catch (err) {
+        console.error("Fallback copy failed:", err);
+      }
+    }
+
     setCopied(true);
     triggerToast('Link de agendamento copiado com sucesso!');
     setTimeout(() => setCopied(false), 2000);
@@ -121,7 +148,25 @@ export default function Appointments({ user, triggerToast, openConfirmModal }: A
     const hasDdi = cleanPhone.length > 11;
     const phoneWithDdi = hasDdi ? cleanPhone : `55${cleanPhone}`;
     
-    window.open(`https://api.whatsapp.com/send?phone=${phoneWithDdi}&text=${encodedText}`, '_blank');
+    const whatsappUrl = `https://api.whatsapp.com/send?phone=${phoneWithDdi}&text=${encodedText}`;
+
+    try {
+      const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+      if (isMobile) {
+        const mobileUrl = `whatsapp://send?phone=${phoneWithDdi}&text=${encodedText}`;
+        window.location.href = mobileUrl;
+        setTimeout(() => {
+          window.location.href = whatsappUrl;
+        }, 1200);
+      } else {
+        const opened = window.open(whatsappUrl, '_blank');
+        if (!opened) {
+          window.location.assign(whatsappUrl);
+        }
+      }
+    } catch (e) {
+      window.location.href = whatsappUrl;
+    }
   };
 
   const filteredBookings = bookings.filter(b => {

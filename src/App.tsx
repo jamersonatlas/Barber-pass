@@ -62,26 +62,103 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [seeding, setSeeding] = useState(false);
   
-  // Public booking/scheduling page trigger
-  const [isBookingMode, setIsBookingMode] = useState(false);
-  const [bookingBarbeariaId, setBookingBarbeariaId] = useState<string | null>(null);
-
-  useEffect(() => {
-    const checkBooking = () => {
+  // Public booking/scheduling page trigger - initialized synchronously to avoid login-page blinking or race conditions
+  const [isBookingMode, setIsBookingMode] = useState<boolean>(() => {
+    try {
       const params = new URLSearchParams(window.location.search);
       const hash = window.location.hash;
       const path = window.location.pathname;
-      const hasAgendar = params.has('agendar');
-      const hasBarbearia = params.has('barbearia');
-      const hasBooking = params.get('booking') === 'true';
+      const href = window.location.href;
+      return (
+        params.has('agendar') || 
+        params.has('barbearia') || 
+        params.get('booking') === 'true' || 
+        hash === '#agendar' || 
+        hash.includes('agendar') ||
+        path.includes('agendar') ||
+        href.includes('agendar=')
+      );
+    } catch (e) {
+      return false;
+    }
+  });
 
-      if (hasAgendar || hasBarbearia || hasBooking || hash === '#agendar' || path.includes('agendar')) {
-        setIsBookingMode(true);
-        let bId = params.get('barbearia') || '';
-        if (!bId && hasAgendar && params.get('agendar') !== 'true' && params.get('agendar') !== '') {
-          bId = params.get('agendar') as string;
+  const [bookingBarbeariaId, setBookingBarbeariaId] = useState<string | null>(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const hash = window.location.hash;
+      const href = window.location.href;
+      
+      let bId = params.get('barbearia') || '';
+      
+      if (!bId && hash) {
+        const hashClean = hash.startsWith('#') ? hash.slice(1) : hash;
+        const hashParams = new URLSearchParams(hashClean);
+        bId = hashParams.get('barbearia') || '';
+        if (!bId && hashClean.includes('barbearia=')) {
+          const match = hashClean.match(/barbearia=([^&]+)/);
+          if (match) bId = match[1];
         }
-        setBookingBarbeariaId(bId || null);
+      }
+      
+      if (!bId && href.includes('barbearia=')) {
+        const match = href.match(/barbearia=([^&\s?#]+)/);
+        if (match) bId = match[1];
+      }
+
+      const hasAgendar = params.has('agendar') || hash.includes('agendar') || href.includes('agendar=');
+      if (!bId && hasAgendar) {
+        bId = params.get('agendar') || '';
+        if (bId === 'true') bId = '';
+      }
+      
+      return bId || null;
+    } catch (e) {
+      return null;
+    }
+  });
+
+  useEffect(() => {
+    const checkBooking = () => {
+      try {
+        const params = new URLSearchParams(window.location.search);
+        const hash = window.location.hash;
+        const path = window.location.pathname;
+        const href = window.location.href;
+
+        const hasAgendar = params.has('agendar') || hash.includes('agendar') || href.includes('agendar=');
+        const hasBarbearia = params.has('barbearia') || hash.includes('barbearia') || href.includes('barbearia=');
+        const hasBooking = params.get('booking') === 'true' || hash.includes('booking=true') || href.includes('booking=true');
+
+        if (hasAgendar || hasBarbearia || hasBooking || hash === '#agendar' || path.includes('agendar')) {
+          setIsBookingMode(true);
+          
+          let bId = params.get('barbearia') || '';
+          
+          if (!bId && hash) {
+            const hashClean = hash.startsWith('#') ? hash.slice(1) : hash;
+            const hashParams = new URLSearchParams(hashClean);
+            bId = hashParams.get('barbearia') || '';
+            if (!bId && hashClean.includes('barbearia=')) {
+              const match = hashClean.match(/barbearia=([^&]+)/);
+              if (match) bId = match[1];
+            }
+          }
+          
+          if (!bId && href.includes('barbearia=')) {
+            const match = href.match(/barbearia=([^&\s?#]+)/);
+            if (match) bId = match[1];
+          }
+
+          if (!bId && hasAgendar) {
+            bId = params.get('agendar') || '';
+            if (bId === 'true') bId = '';
+          }
+          
+          setBookingBarbeariaId(bId || null);
+        }
+      } catch (err) {
+        console.error("Error matching query routing parameters", err);
       }
     };
     checkBooking();
@@ -802,6 +879,10 @@ export default function App() {
           <Appearance
             user={user}
             triggerToast={triggerToast}
+            onPreviewBooking={() => {
+              setBookingBarbeariaId(user.uid);
+              setIsBookingMode(true);
+            }}
           />
         );
       case 'barbers':
