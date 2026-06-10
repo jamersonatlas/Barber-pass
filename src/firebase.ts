@@ -1,6 +1,6 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth, GoogleAuthProvider } from 'firebase/auth';
-import { getFirestore } from 'firebase/firestore';
+import { initializeFirestore } from 'firebase/firestore';
 import firebaseConfig from '../firebase-applet-config.json';
 
 // Support Vercel environment variables or fallback to local AI Studio sandbox in development
@@ -24,7 +24,10 @@ const dbId = resolvedConfig.firestoreDatabaseId && resolvedConfig.firestoreDatab
   ? resolvedConfig.firestoreDatabaseId 
   : undefined;
 
-export const db = getFirestore(app, dbId); /* CRITICAL: The app will break without this line */
+// Use initializeFirestore with experimentalForceLongPolling to ensure reliable connectivity inside sandboxed browser iframes
+export const db = initializeFirestore(app, {
+  experimentalForceLongPolling: true,
+}, dbId); /* CRITICAL: The app will break without this line */
 export const auth = getAuth();
 export const googleProvider = new GoogleAuthProvider();
 
