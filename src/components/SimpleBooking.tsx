@@ -12,7 +12,8 @@ import {
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { Barber, Service } from '../types';
-import { initials } from '../utils';
+import { initials, consolidateServicesList } from '../utils';
+import SupportChat from './SupportChat';
 import { 
   Scissors, 
   Calendar, 
@@ -27,7 +28,17 @@ import {
   MapPin,
   Search,
   Trash2,
-  MessageSquare
+  MessageSquare,
+  CreditCard,
+  Copy,
+  Check,
+  ExternalLink,
+  QrCode,
+  AlertCircle,
+  AlertTriangle,
+  RefreshCw,
+  X,
+  ShieldCheck
 } from 'lucide-react';
 
 const BARBER_FALLBACK_PHOTOS = [
@@ -63,15 +74,134 @@ export default function SimpleBooking({ onClose, barbeariaId }: SimpleBookingPro
   const [bookingFinished, setBookingFinished] = useState(false);
   const [finishedDetails, setFinishedDetails] = useState<any>(null);
   const [bookingLoading, setBookingLoading] = useState(false);
+  const [hasAutoRedirected, setHasAutoRedirected] = useState(false);
 
   // Client cancellation & booking tracking state
   const [activeTab, setActiveTab] = useState<'booking' | 'my-bookings'>('booking');
+  const [showPlanPromo, setShowPlanPromo] = useState(true);
+  const [viewPlanDetails, setViewPlanDetails] = useState(false);
   const [submittingError, setSubmittingError] = useState<string | null>(null);
   const [searchPhone, setSearchPhone] = useState('');
   const [allBarbeariaBookings, setAllBarbeariaBookings] = useState<any[]>([]);
   const [cancelingId, setCancelingId] = useState<string | null>(null);
   const [cancelError, setCancelError] = useState<string | null>(null);
   const [cancelSuccess, setCancelSuccess] = useState<string | null>(null);
+
+  // Mercado Pago States
+  const [mpConfigured, setMpConfigured] = useState(false);
+  const [paymentMethod, setPaymentMethod] = useState<'presencial' | 'mercado_pago_pix'>('presencial');
+  const [payingState, setPayingState] = useState<'idle' | 'generating' | 'waiting' | 'approved' | 'failed'>('idle');
+  const [pixQrCodeBase64, setPixQrCodeBase64] = useState('');
+  const [pixCopyPaste, setPixCopyPaste] = useState('');
+  const [paymentId, setPaymentId] = useState('');
+  const [pixExpiresIn, setPixExpiresIn] = useState(600); // 10 minutes countdown
+  const [copiedPix, setCopiedPix] = useState(false);
+
+  // Check Mercado Pago Configuration on Mount
+  useEffect(() => {
+    fetch('/api/mercado-pago/config')
+      .then(res => res.json())
+      .then(data => {
+        if (data.configured) {
+          setMpConfigured(true);
+        }
+      })
+      .catch(err => console.error('Erro ao verificar config do Mercado Pago:', err));
+  }, []);
+
+  // Check URL search parameters for automatic routing to cancellation
+  useEffect(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const consultar = params.get('consultar');
+      const tel = params.get('tel');
+      if (consultar === 'true') {
+        setActiveTab('my-bookings');
+        if (tel) {
+          setSearchPhone(decodeURIComponent(tel));
+        }
+      }
+    } catch (e) {
+      console.error('Error parsing search parameters:', e);
+    }
+  }, []);
+
+  // Poll payment status & manage countdown timer
+  useEffect(() => {
+    if (payingState !== 'waiting' || !paymentId) return;
+
+    // Countdown Timer decrement
+    const timer = setInterval(() => {
+      setPixExpiresIn(prev => {
+        if (prev <= 1) {
+          clearInterval(timer);
+          setPayingState('failed');
+          setSubmittingError('O tempo limite para o pagamento Pix expirou. Por favor, tente novamente.');
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    // Polling Mercado Pago Payment Status
+    const statusPoll = setInterval(async () => {
+      try {
+        const headers: Record<string, string> = {};
+        if (barbeariaInfo?.mercadoPagoAccessToken) {
+          headers["x-access-token"] = barbeariaInfo.mercadoPagoAccessToken;
+        }
+
+        const res = await fetch(`/api/mercado-pago/payment-status/${paymentId}`, { headers });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.status === 'approved') {
+            clearInterval(statusPoll);
+            clearInterval(timer);
+            
+            // Payment approved! Proceed with booking confirmation.
+            const parsedValue = Number(selectedService?.value) || 0;
+            const responseDetails = {
+              barbeariaId: barbeariaId || selectedBarber?.id || '',
+              barberId: selectedBarber?.id || '',
+              barberName: selectedBarber?.name || '',
+              barberPhone: barbeariaInfo?.phone || selectedBarber?.phone || '',
+              serviceId: selectedService?.id || '',
+              serviceName: selectedService?.name || '',
+              serviceValue: parsedValue,
+              date: selectedDate,
+              time: selectedTime,
+              clientName: clientName.trim(),
+              clientPhone: clientPhone.trim(),
+              createdAt: new Date().toISOString(),
+              paymentStatus: 'paid',
+              paymentMethod: 'mercado_pago_pix',
+              paymentId: paymentId
+            };
+
+            // Save booking to Firestore
+            const bookingCol = collection(db, 'guest_bookings');
+            await addDoc(bookingCol, responseDetails);
+
+            setFinishedDetails(responseDetails);
+            setPayingState('approved');
+            setBookingFinished(true);
+          } else if (data.status === 'rejected' || data.status === 'cancelled') {
+            clearInterval(statusPoll);
+            clearInterval(timer);
+            setPayingState('failed');
+            setSubmittingError('O pagamento Pix foi recusado ou cancelado no Mercado Pago. Tente novamente.');
+          }
+        }
+      } catch (err) {
+        console.error("Erro ao verificar status do pagamento Pix:", err);
+      }
+    }, 2500);
+
+    return () => {
+      clearInterval(timer);
+      clearInterval(statusPoll);
+    };
+  }, [payingState, paymentId, selectedService, selectedBarber, selectedDate, selectedTime, clientName, clientPhone, barbeariaId, barbeariaInfo]);
 
   // Sync barbearia info, professionals, and overall services
   useEffect(() => {
@@ -187,7 +317,10 @@ export default function SimpleBooking({ onClose, barbeariaId }: SimpleBookingPro
     const monthNames = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
 
     // Custom weekly active days configuration
-    const activeDays = barbeariaInfo?.scheduleSettings?.workingDays ?? [1, 2, 3, 4, 5, 6];
+    const activeDaysRaw = selectedBarber?.scheduleSettings?.workingDays ?? 
+                          barbeariaInfo?.scheduleSettings?.workingDays ?? 
+                          [1, 2, 3, 4, 5, 6];
+    const activeDays = Array.isArray(activeDaysRaw) ? activeDaysRaw.map((v: any) => Number(v)) : [1, 2, 3, 4, 5, 6];
 
     // Read up to 21 future calendar days to find active workdays
     for (let i = 0; i < 21; i++) {
@@ -225,16 +358,143 @@ export default function SimpleBooking({ onClose, barbeariaId }: SimpleBookingPro
   ];
 
   // List of professional work schedules
-  const businessHours = barbeariaInfo?.scheduleSettings?.workingHours ?? [
-    '08:00', '08:30', '09:00', '09:30', '10:00', '10:30', '11:00', '11:30', 
-    '13:00', '13:30', '14:00', '14:30', '15:00', '15:30', '16:00', '16:30',
-    '17:00', '17:30', '18:00', '18:30', '19:00', '19:30'
-  ];
+  const getBusinessHoursForSelectedDate = () => {
+    let dayOfWeek: number | null = null;
+    if (selectedDate) {
+      const parts = selectedDate.split('-');
+      if (parts.length === 3) {
+        const d = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
+        dayOfWeek = d.getDay();
+      }
+    }
+
+    if (dayOfWeek !== null) {
+      // 1. Check selectedBarber's day-specific hours
+      const barberDsh = selectedBarber?.scheduleSettings?.daySpecificHours;
+      if (barberDsh && typeof barberDsh === 'object') {
+        const barberDayHours = barberDsh[dayOfWeek] ?? barberDsh[String(dayOfWeek)];
+        if (Array.isArray(barberDayHours)) return barberDayHours;
+      }
+
+      // 2. Fallback to barbearia's day-specific hours
+      const barbeariaDsh = barbeariaInfo?.scheduleSettings?.daySpecificHours;
+      if (barbeariaDsh && typeof barbeariaDsh === 'object') {
+        const barbeariaDayHours = barbeariaDsh[dayOfWeek] ?? barbeariaDsh[String(dayOfWeek)];
+        if (Array.isArray(barbeariaDayHours)) return barbeariaDayHours;
+      }
+    }
+
+    return selectedBarber?.scheduleSettings?.workingHours ?? 
+           barbeariaInfo?.scheduleSettings?.workingHours ?? [
+      '08:00', '08:30', '09:00', '09:30', '10:00', '10:30', '11:00', '11:30', 
+      '13:00', '13:30', '14:00', '14:30', '15:00', '15:30', '16:00', '16:30',
+      '17:00', '17:30', '18:00', '18:30', '19:00', '19:30'
+    ];
+  };
+
+  const businessHours = getBusinessHoursForSelectedDate();
+
+  const getWeekParity = (dateStr: string) => {
+    if (!dateStr) return 'A';
+    try {
+      const base = new Date('2026-01-05T12:00:00'); // First Monday of 2026
+      const d = new Date(dateStr + 'T12:00:00');
+      const diffTime = d.getTime() - base.getTime();
+      const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+      const diffWeeks = Math.floor(diffDays / 7);
+      const parity = Math.abs(diffWeeks) % 2;
+      return parity === 0 ? 'A' : 'B';
+    } catch (e) {
+      console.error(e);
+      return 'A';
+    }
+  };
+
+  // Helper to check if a date and time slot has already passed or is too close (min 45 mins advance notice)
+  const isSlotInPast = (dateStr: string, timeStr: string) => {
+    if (!dateStr || !timeStr) return false;
+    try {
+      const today = new Date();
+      const yyyy = today.getFullYear();
+      const mm = String(today.getMonth() + 1).padStart(2, '0');
+      const dd = String(today.getDate()).padStart(2, '0');
+      const todayStr = `${yyyy}-${mm}-${dd}`;
+      
+      if (dateStr < todayStr) return true;
+      if (dateStr === todayStr) {
+        const [hStr, mStr] = timeStr.split(':');
+        const slotHour = parseInt(hStr, 10);
+        const slotMin = parseInt(mStr, 10);
+        
+        // Convert current time and slot time to total minutes of the day
+        const currentTotalMinutes = today.getHours() * 60 + today.getMinutes();
+        const slotTotalMinutes = slotHour * 60 + slotMin;
+        
+        // Require at least 45 minutes of advance notice
+        if (slotTotalMinutes < currentTotalMinutes + 45) {
+          return true;
+        }
+      }
+      return false;
+    } catch (e) {
+      return false;
+    }
+  };
 
   // Helper to check if hour is already taken on selected date for chosen barber
   const isSlotTaken = (timeStr: string) => {
     if (!selectedDate) return false;
-    return existingBookings.some(b => b.date === selectedDate && b.time === timeStr);
+
+    // 1. Check standard guest bookings
+    const isBooked = existingBookings.some(b => b.date === selectedDate && b.time === timeStr);
+    if (isBooked) return true;
+
+    // 2. Check recurring subscriber slots (mensalistas)
+    // Merge recurring slots from both the specific selected professional (if any) and the global barbearia config to ensure complete coverage.
+    // This is vital because recurring slots are stored on the main barbearia's configuration document (barbeariaInfo) and we want them to remain active even when an employee/barber is selected.
+    const allSlots = [
+      ...(barbeariaInfo?.scheduleSettings?.recurringSlots || []),
+      ...(selectedBarber?.scheduleSettings?.recurringSlots || [])
+    ];
+    // Filter to ensure unique slots by unique ID
+    const uniqueSlotsMap = new Map();
+    allSlots.forEach(slot => {
+      if (slot && slot.id) {
+        uniqueSlotsMap.set(slot.id, slot);
+      }
+    });
+    const recurringSlots = Array.from(uniqueSlotsMap.values());
+
+    if (recurringSlots.length > 0) {
+      const parts = selectedDate.split('-');
+      if (parts.length === 3) {
+        const d = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
+        const dayOfWeek = d.getDay(); // 0 = Sunday, 1 = Monday, ...
+
+        const hasRecurringMatch = recurringSlots.some((slot: any) => {
+          if (slot.dayOfWeek !== dayOfWeek || slot.time !== timeStr) return false;
+          
+          // Verify if active relative to start date
+          if (slot.startDate && selectedDate < slot.startDate) return false;
+          
+          // Verify if active relative to expiry date
+          if (slot.expiryDate && selectedDate > slot.expiryDate) return false;
+
+          // If frequency is biweekly, check if it falls on an active week (even weeks from startDate)
+          if (slot.frequency === 'biweekly') {
+            const p1 = getWeekParity(slot.startDate || '2026-01-05');
+            const p2 = getWeekParity(selectedDate);
+            if (p1 !== p2) return false;
+          }
+
+          return true;
+        });
+
+        if (hasRecurringMatch) return true;
+      }
+    }
+
+    return false;
   };
 
   // Dynamic list of active professionals (supporting fallback to the owner Barbearia if no employees are configured yet)
@@ -255,6 +515,81 @@ export default function SimpleBooking({ onClose, barbeariaId }: SimpleBookingPro
     }
     return selectedBarber ? s.ownerId === selectedBarber.id : false;
   });
+
+  // We show all three plans as default, customizable by the barber
+  const customPlans = barbeariaInfo?.plans || {};
+
+  const activePlansToShow = React.useMemo(() => {
+    const custom = barbeariaInfo?.plans ? Object.keys(barbeariaInfo.plans) : [];
+    if (custom.length > 0) {
+      const order = ['Básico', 'Premium', 'VIP'];
+      const sorted = order.filter(k => custom.includes(k));
+      const others = custom.filter(k => !order.includes(k));
+      return [...sorted, ...others];
+    }
+    return ['Básico', 'Premium', 'VIP'];
+  }, [barbeariaInfo]);
+
+  const defaultPlans = {
+    Básico: {
+      title: 'Plano Essencial',
+      price: 70,
+      desc: 'Ideal para quem precisa de manutenção básica quinzenal.',
+      badge: 'BÁSICO',
+      defaultServices: ['2x Cortes Simples (Máquina/Tesoura)', 'Agendamento prioritário online', 'Acesso ao Portal de Créditos']
+    },
+    Premium: {
+      title: 'Plano Cavalheiro',
+      price: 120,
+      desc: 'O plano perfeito para manter cabelo e barba sempre alinhados.',
+      badge: 'PREMIUM',
+      defaultServices: ['3x Cortes Completos (Cabelo)', '1x Barba Completa com Toalha Quente', 'Agendamento prioritário online', 'Acesso ao Portal de Créditos']
+    },
+    VIP: {
+      title: 'Plano Executivo',
+      price: 200,
+      desc: 'Experiência ultra completa para o homem exigente.',
+      badge: 'VIP EXPERIENCE',
+      defaultServices: ['Cortes e Barbas (3x Pacotes VIP)', '1x Hidratação Profissional inclusa', '1x Sobrancelha inclusa', 'Bebida cortesia em cada visita 🍻']
+    }
+  };
+
+  const planInfoLookup = React.useMemo(() => {
+    const lookup: Record<string, {
+      title: string;
+      price: number;
+      desc: string;
+      badge: string;
+      defaultServices: string[];
+    }> = {};
+
+    activePlansToShow.forEach(id => {
+      const saved = customPlans[id] || {};
+      const def = defaultPlans[id as 'Básico' | 'Premium' | 'VIP'] || {
+        title: saved.name || id,
+        price: 100,
+        desc: 'Plano personalizado de assinatura.',
+        badge: id.toUpperCase(),
+        defaultServices: ['Serviços inclusos na assinatura']
+      };
+
+      lookup[id] = {
+        title: saved.name || def.title,
+        price: Number(saved.price !== undefined ? saved.price : def.price),
+        desc: saved.desc || def.desc,
+        badge: saved.badge || def.badge,
+        defaultServices: consolidateServicesList((saved.services || def.defaultServices) as string[])
+      };
+    });
+
+    return lookup;
+  }, [activePlansToShow, customPlans]);
+
+  const gridClass = activePlansToShow.length === 1
+    ? 'grid grid-cols-1 max-w-sm mx-auto gap-5 pt-2'
+    : activePlansToShow.length === 2
+    ? 'grid grid-cols-1 md:grid-cols-2 max-w-2xl mx-auto gap-5 pt-2'
+    : 'grid grid-cols-1 md:grid-cols-3 gap-5 pt-2';
 
   const handleNextStep = () => {
     if (currentStep === 1 && selectedBarber) {
@@ -284,6 +619,15 @@ export default function SimpleBooking({ onClose, barbeariaId }: SimpleBookingPro
     return clean;
   };
 
+  const getWhatsAppPlanLink = (planName: string) => {
+    if (!barbeariaInfo?.phone) return '#';
+    const cleanPhone = formatWhatsAppNumber(barbeariaInfo.phone);
+    if (!cleanPhone) return '#';
+    const salonName = barbeariaInfo?.name || 'Royal Cuts';
+    const text = encodeURIComponent(`Olá! Vi a opção do Clube de Assinatura da *${salonName}* e gostaria de assinar o plano *${planName}*! ✂️💎`);
+    return `https://api.whatsapp.com/send?phone=${cleanPhone}&text=${text}`;
+  };
+
   const handleCreateBooking = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedBarber || !selectedService || !selectedDate || !selectedTime || !clientName.trim() || !clientPhone.trim()) {
@@ -295,6 +639,35 @@ export default function SimpleBooking({ onClose, barbeariaId }: SimpleBookingPro
 
     try {
       const parsedValue = Number(selectedService.value) || 0;
+
+      if (paymentMethod === 'mercado_pago_pix') {
+        setPayingState('generating');
+        
+        const res = await fetch("/api/mercado-pago/create-pix", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            amount: parsedValue,
+            description: `Reserva: ${selectedService.name} com ${selectedBarber.name}`,
+            clientName: clientName.trim(),
+            clientPhone: clientPhone.trim(),
+            customAccessToken: barbeariaInfo?.mercadoPagoAccessToken || undefined
+          })
+        });
+
+        const data = await res.json();
+        if (!res.ok) {
+          throw new Error(data.error || "Ocorreu um erro ao gerar a cobrança Pix.");
+        }
+
+        setPixQrCodeBase64(data.qrCodeBase64);
+        setPixCopyPaste(data.qrCode);
+        setPaymentId(data.paymentId);
+        setPixExpiresIn(600); // 10 minutes reset
+        setPayingState('waiting');
+        return; // wait for polling to complete the booking!
+      }
+
       const responseDetails = {
         barbeariaId: barbeariaId || selectedBarber.id,
         barberId: selectedBarber.id,
@@ -307,7 +680,9 @@ export default function SimpleBooking({ onClose, barbeariaId }: SimpleBookingPro
         time: selectedTime,
         clientName: clientName.trim(),
         clientPhone: clientPhone.trim(),
-        createdAt: new Date().toISOString()
+        createdAt: new Date().toISOString(),
+        paymentStatus: 'pending',
+        paymentMethod: 'establishment'
       };
 
       // Add to firestore
@@ -318,33 +693,88 @@ export default function SimpleBooking({ onClose, barbeariaId }: SimpleBookingPro
       setBookingFinished(true);
     } catch (err: any) {
       console.error('Error reserving guest slot:', err);
-      setSubmittingError('Falha ao salvar seu agendamento no banco de dados. Por favor, tente novamente ou contate-nos. Detalhes: ' + (err.message || err));
+      setPayingState('idle');
+      setSubmittingError('Falha ao processar o agendamento. Detalhes: ' + (err.message || err));
     } finally {
       setBookingLoading(false);
     }
   };
 
-  const handleSendWhatsApp = () => {
+  const handleSendWhatsApp = (isAuto: boolean = false) => {
     if (!finishedDetails) return;
 
     const barberPhone = finishedDetails.barberPhone || '';
     const cleanPhone = formatWhatsAppNumber(barberPhone);
     
-    // Aesthetic professional booking confirmation text
-    const dateFormatted = finishedDetails.date.split('-').reverse().join('/');
-    const message = `Olá, ${finishedDetails.barberName}! Gostaria de confirmar um horário de agendamento simples que acabei de reservar no sistema:\n\n` +
-      `👤 *Cliente:* ${finishedDetails.clientName}\n` +
-      `📞 *Contato:* ${finishedDetails.clientPhone}\n` +
-      `✂ *Serviço:* ${finishedDetails.serviceName}\n` +
-      `💵 *Valor:* R$ ${finishedDetails.serviceValue.toFixed(2).replace('.', ',')}\n` +
-      `📅 *Data:* ${dateFormatted}\n` +
-      `🕒 *Horário:* ${finishedDetails.time}\n\n` +
-      `_Confirmado via BarberPass! Aguardo você._`;
+    const dateFormatted = finishedDetails.date.split('-').reverse().join('-');
+    const cancelUrl = `${window.location.origin}${window.location.pathname}?barbearia=${finishedDetails.barbeariaId || barbeariaId || ''}&consultar=true&tel=${encodeURIComponent(finishedDetails.clientPhone)}`;
+
+    const salonName = barbeariaInfo?.name || 'Royal Cuts';
+    const message = `* * * * 💈 *COMPROVANTE* *DE* *AGENDAMENTO* * * * *\n\n` +
+      `Olá! Fiz um agendamento na *${salonName}* e estou enviando o comprovante para confirmar meu horário:\n\n` +
+      `=-=-=-=-=-=-=-=-=-=-=-=-=-==-=-=\n` +
+      `👥 *CLIENTE:* *${finishedDetails.clientName}*\n` +
+      `💇🏽‍♂️ *PROFISSIONAL:* *${finishedDetails.barberName}*\n` +
+      `✂️ *SERVIÇO:* *${finishedDetails.serviceName}* - R$ ${finishedDetails.serviceValue.toFixed(2).replace('.', ',')}\n` +
+      `📆 *DATA:* *${dateFormatted}*\n` +
+      `⏰ *HORÁRIO:* *${finishedDetails.time}*\n` +
+      `=-=-=-=-=-=-=-=-=-=-=-=-=-==-=-=\n\n` +
+      `⚠️ *CONFIRMAÇÃO OBRIGATÓRIA:*\n` +
+      `• Por favor, confirme meu horário acima! 💈✂️\n\n` +
+      `🔗 *VER OU CANCELAR SEU HORÁRIO:*\n` +
+      `👉 ${cancelUrl}\n\n` +
+      `Muito obrigado! Nos vemos em breve.`;
 
     const encodedText = encodeURIComponent(message);
     const whatsappUrl = cleanPhone 
       ? `https://api.whatsapp.com/send?phone=${cleanPhone}&text=${encodedText}`
       : `https://api.whatsapp.com/send?text=${encodedText}`;
+
+    if (isAuto) {
+      try {
+        const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+        if (isMobile) {
+          const mobileUrl = cleanPhone
+            ? `whatsapp://send?phone=${cleanPhone}&text=${encodedText}`
+            : `whatsapp://send?text=${encodedText}`;
+          try {
+            if (window.top) {
+              window.top.location.href = mobileUrl;
+            } else {
+              window.location.href = mobileUrl;
+            }
+          } catch {
+            window.location.href = mobileUrl;
+          }
+
+          setTimeout(() => {
+            try {
+              if (window.top) {
+                window.top.location.href = whatsappUrl;
+              } else {
+                window.location.href = whatsappUrl;
+              }
+            } catch {
+              window.location.href = whatsappUrl;
+            }
+          }, 1500);
+        } else {
+          try {
+            if (window.top) {
+              window.top.location.href = whatsappUrl;
+            } else {
+              window.open(whatsappUrl, '_blank');
+            }
+          } catch {
+            window.open(whatsappUrl, '_blank');
+          }
+        }
+      } catch (err) {
+        console.error('Error auto-redirecting to WhatsApp:', err);
+        window.location.href = whatsappUrl;
+      }
+      return;
+    }
 
     try {
       const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
@@ -366,6 +796,17 @@ export default function SimpleBooking({ onClose, barbeariaId }: SimpleBookingPro
       window.location.href = whatsappUrl;
     }
   };
+
+  // Automatic redirect to WhatsApp on booking completion
+  useEffect(() => {
+    if (bookingFinished && finishedDetails && !hasAutoRedirected) {
+      setHasAutoRedirected(true);
+      const timeout = setTimeout(() => {
+        handleSendWhatsApp(true);
+      }, 1500); // Give 1.5 seconds to see confirmation details before opening WhatsApp
+      return () => clearTimeout(timeout);
+    }
+  }, [bookingFinished, finishedDetails, hasAutoRedirected]);
 
   if (loading) {
     return (
@@ -398,7 +839,46 @@ export default function SimpleBooking({ onClose, barbeariaId }: SimpleBookingPro
           <div>
             <h2 className="font-display font-bold text-2xl text-white">Agendamento Realizado!</h2>
             <p className="text-xs text-text-secondary mt-1.5 leading-normal">
-              Seu horário de atendimento está pré-reservado com sucesso no salão.
+              Seu horário de atendimento está pré-reservado no salão.
+            </p>
+          </div>
+
+          {/* URGENT WARNING BANNER ABOUT COMPROVANTE & AUTOMATIC CANCELLATION */}
+          <div className="w-full bg-gradient-to-br from-red-950/90 via-amber-950/80 to-red-950/90 border-2 border-red-500/80 rounded-2xl p-4 shadow-2xl flex flex-col items-center text-center space-y-3 relative overflow-hidden">
+            <div className="absolute -right-6 -bottom-6 w-24 h-24 bg-red-500/10 rounded-full blur-xl pointer-events-none"></div>
+
+            <div className="flex items-center gap-2 bg-red-500/25 px-3 py-1.5 rounded-full border border-red-500/50 shadow-sm">
+              <AlertTriangle className="w-4 h-4 text-amber-400 animate-bounce shrink-0" />
+              <span className="text-[11px] font-black uppercase text-amber-300 tracking-wider">
+                ⚠️ AVISO OBRIGATÓRIO DE CONFIRMAÇÃO
+              </span>
+            </div>
+
+            <p className="text-xs sm:text-sm font-extrabold text-white leading-relaxed">
+              O seu horário <span className="text-amber-300 underline decoration-red-500 decoration-2 underline-offset-4 uppercase">SÓ SERÁ RESERVADO</span> após o envio do comprovante no WhatsApp do barbeiro!
+            </p>
+
+            <div className="bg-black/60 border border-red-500/40 rounded-xl p-3 text-[11px] text-amber-100 font-semibold leading-normal w-full space-y-1">
+              <div className="text-red-400 font-black text-xs uppercase flex items-center justify-center gap-1">
+                <span>🚨 CASO NÃO ENVIE O COMPROVANTE:</span>
+              </div>
+              <p className="text-text-primary text-[11px]">
+                Seu horário <strong className="text-red-400 underline uppercase">será cancelado automaticamente</strong> e disponibilizado para outro cliente.
+              </p>
+            </div>
+          </div>
+
+          {/* WhatsApp redirect notice */}
+          <div className="w-full bg-emerald-950/30 border border-emerald-500/30 rounded-xl p-3 flex flex-col items-center space-y-1">
+            <div className="flex items-center gap-1.5">
+              <span className="relative flex h-2.5 w-2.5">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
+              </span>
+              <span className="text-xs font-bold text-emerald-400">Redirecionando para o WhatsApp...</span>
+            </div>
+            <p className="text-[10px] text-text-muted text-center leading-normal">
+              O WhatsApp será aberto para você enviar o comprovante ao barbeiro. Se não abrir, clique no botão verde abaixo!
             </p>
           </div>
 
@@ -442,22 +922,53 @@ export default function SimpleBooking({ onClose, barbeariaId }: SimpleBookingPro
             </div>
           </div>
 
-          <div className="w-full space-y-3 pt-2">
+          <div className="w-full space-y-2.5 pt-2">
             <button
-              onClick={handleSendWhatsApp}
-              className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-3.5 px-4 rounded-xl flex items-center justify-center gap-2 cursor-pointer shadow-lg transition-all transform hover:scale-[1.01] active:scale-100"
+              onClick={() => handleSendWhatsApp(false)}
+              className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold py-3.5 px-4 rounded-xl flex items-center justify-center gap-2 cursor-pointer shadow-xl transition-all transform hover:scale-[1.01] active:scale-100 text-sm"
             >
               <svg className="w-5 h-5 fill-current shrink-0" viewBox="0 0 24 24">
                 <path d="M.057 24l1.687-6.163c-1.041-1.804-1.588-3.849-1.587-5.946C.06 5.348 5.397.01 12.008.01c3.202.001 6.212 1.246 8.477 3.514 2.266 2.268 3.507 5.28 3.505 8.484-.004 6.657-5.34 11.997-11.953 11.997-2.005-.001-3.973-.502-5.724-1.455L0 24zm4.846-3.896V20.1a9.927 9.927 0 0 1 5.922 1.942l.424.252a10.024 10.024 0 0 0 5.46-1.595l.392-.233 4.092 1.071-1.091-3.991.24-.382a10.038 10.038 0 0 0 1.543-5.364c.002-5.526-4.433-10.024-9.882-10.024-5.462 0-9.886 4.498-9.888 10.026-.001 1.906.516 3.766 1.498 5.32l.275.437-1.127 4.12 4.152-1.088zm13.125-6.702c.071-.12.262-.191.562-.34.301-.15 1.776-.874 2.046-.974.271-.1.452-.15.642.14.19.29.733.913.898 1.1.166.19.33.21.631.06.301-.15 1.258-.464 2.39-1.474.88-.785 1.474-1.756 1.647-2.055.174-.3.018-.462-.132-.61l-.412-.479c-.15-.175-.24-.3-.36-.5-.12-.2-.06-.375-.03-.524.03-.15.301-.913.411-1.189.109-.271.211-.231.3-.231h.256c.196 0 .512.072.78.36.269.29 1.025 1.002 1.025 2.441s-1.045 2.827-1.196 3.023c-.15.195-2.055 3.138-4.978 4.398-.696.3-1.238.48-1.662.614-.7.225-1.338.193-1.84.119-.561-.082-1.724-.704-1.967-1.385-.24-.68-.24-1.267-.17-1.388z"/>
               </svg>
-              <span>Enviar no WhatsApp</span>
+              <span>📲 ENVIAR COMPROVANTE NO WHATSAPP</span>
+            </button>
+
+            <button
+              onClick={() => {
+                setBookingFinished(false);
+                setFinishedDetails(null);
+                setHasAutoRedirected(false);
+                setSelectedTime('');
+                setCurrentStep(1);
+                setActiveTab('booking');
+              }}
+              className="w-full bg-[#c5a880] hover:bg-[#c5a880]/90 text-black text-xs font-bold py-3 px-4 rounded-xl cursor-pointer shadow transition-colors"
+            >
+              Fazer Outro Agendamento 📅
+            </button>
+
+            <button
+              onClick={() => {
+                if (finishedDetails?.clientPhone) {
+                  setSearchPhone(finishedDetails.clientPhone);
+                }
+                setBookingFinished(false);
+                setFinishedDetails(null);
+                setHasAutoRedirected(false);
+                setSelectedTime('');
+                setCurrentStep(1);
+                setActiveTab('my-bookings');
+              }}
+              className="w-full bg-bg-dark-750 hover:bg-bg-dark-700 border border-border-dark text-text-primary text-xs font-bold py-3 px-4 rounded-xl cursor-pointer shadow transition-colors"
+            >
+              Ver Meus Agendamentos 🔍
             </button>
 
             <button
               onClick={onClose}
-              className="w-full bg-bg-dark-750 hover:bg-bg-dark-700 border border-border-dark text-text-primary text-xs font-bold py-3 px-4 rounded-xl cursor-pointer shadow transition-colors"
+              className="w-full text-text-muted hover:text-white text-[11px] font-bold py-2 px-4 rounded-xl cursor-pointer transition-colors text-center"
             >
-              Fechar e Voltar
+              Sair / Ir para o Início
             </button>
           </div>
         </motion.div>
@@ -466,10 +977,25 @@ export default function SimpleBooking({ onClose, barbeariaId }: SimpleBookingPro
   }
 
   return (
-    <div className="h-screen overflow-hidden w-full bg-bg-dark-900 flex flex-col font-sans select-none text-text-primary">
+    <div 
+      className="h-[100dvh] w-full max-w-full overflow-x-hidden overflow-y-hidden bg-bg-dark-900 flex flex-col font-sans text-text-primary relative touch-none"
+      style={{ touchAction: 'none' }}
+    >
       
+      {/* Immersive Client Portal Custom Background */}
+      {barbeariaInfo?.loginBgUrl && (
+        <div 
+          className="absolute inset-0 bg-cover bg-center z-0 transition-opacity duration-1000" 
+          style={{ 
+            backgroundImage: `url('${barbeariaInfo.loginBgUrl}')` 
+          }}
+        >
+          <div className="absolute inset-0 bg-black/85 backdrop-blur-[2px]"></div>
+        </div>
+      )}
+
       {/* Top Banner Branding */}
-      <header className="px-5 py-4 border-b border-border-dark bg-bg-dark-800 flex items-center justify-between shrink-0 shadow-md">
+      <header className="px-5 py-4 border-b border-border-dark bg-bg-dark-800/90 backdrop-blur-sm flex items-center justify-between shrink-0 shadow-md relative z-10">
         <button
           onClick={handleBackStep}
           className="flex items-center gap-1.5 text-xs text-text-muted hover:text-white transition-colors cursor-pointer py-1.5 px-2.5 rounded-lg hover:bg-bg-dark-750"
@@ -489,26 +1015,122 @@ export default function SimpleBooking({ onClose, barbeariaId }: SimpleBookingPro
       </header>
 
       {/* Steps Indicator Tracker */}
-      <div className="bg-bg-dark-850 px-5 py-2.5 border-b border-border-dark flex justify-between items-center text-[10px] uppercase font-bold text-text-muted tracking-wider shrink-0">
-        <div className="flex items-center gap-4.5 overflow-x-auto">
+      <div className="bg-bg-dark-850/90 backdrop-blur-sm px-5 py-2.5 border-b border-border-dark flex justify-between items-center text-[10px] uppercase font-bold text-text-muted tracking-wider shrink-0 relative z-10 w-full max-w-full overflow-hidden">
+        <div className="flex items-center gap-2 sm:gap-4.5 overflow-x-auto min-w-0 shrink whitespace-nowrap scrollbar-none py-0.5">
           <span className={currentStep === 1 ? 'text-brand-amber font-extrabold' : ''}>1. Barbeiro</span>
-          <ChevronRight className="w-3 h-3 text-border-dark" />
+          <ChevronRight className="w-3 h-3 text-border-dark shrink-0" />
           <span className={currentStep === 2 ? 'text-brand-amber font-extrabold' : ''}>2. Serviço</span>
-          <ChevronRight className="w-3 h-3 text-border-dark" />
+          <ChevronRight className="w-3 h-3 text-border-dark shrink-0" />
           <span className={currentStep === 3 ? 'text-brand-amber font-extrabold' : ''}>3. Data/Hora</span>
-          <ChevronRight className="w-3 h-3 text-border-dark" />
+          <ChevronRight className="w-3 h-3 text-border-dark shrink-0" />
           <span className={currentStep === 4 ? 'text-brand-amber font-extrabold' : ''}>4. Confirmação</span>
         </div>
-        <div className="text-[#c5a880] shrink-0 font-display flex items-center gap-1">
+        <div className="text-[#c5a880] shrink-0 font-display flex items-center gap-1 pl-2">
           <Sparkles className="w-3 h-3" />
           <span className="hidden sm:inline">Modo Público</span>
         </div>
       </div>
 
       {/* Active Step Panel Body */}
-      <main className="flex-1 overflow-y-auto p-5 md:p-8 max-w-2xl w-full mx-auto space-y-6">
-        
-        {/* Tab Selection Switcher */}
+      <main 
+        className="flex-1 overflow-y-auto overflow-x-hidden p-5 pb-40 md:p-8 md:pb-16 max-w-2xl w-full mx-auto space-y-6 relative z-10 touch-pan-y"
+        style={{ touchAction: 'pan-y' }}
+      >
+        {payingState === 'generating' && (
+          <div className="flex flex-col items-center justify-center py-16 text-center space-y-4 font-sans animate-fade-in bg-bg-dark-800 border border-border-dark rounded-2xl p-6">
+            <div className="w-12 h-12 border-4 border-[#c5a880] border-t-transparent rounded-full animate-spin"></div>
+            <div className="space-y-1">
+              <h3 className="font-bold text-white text-base">Gerando cobrança Pix</h3>
+              <p className="text-xs text-text-secondary max-w-xs mx-auto">Seu horário está sendo pré-reservado. Estamos gerando o código QR do Mercado Pago...</p>
+            </div>
+          </div>
+        )}
+
+        {payingState === 'waiting' && (
+          <div className="bg-bg-dark-800 border border-border-dark rounded-2xl p-6 shadow-2xl space-y-6 font-sans animate-fade-in relative overflow-hidden">
+            <div className="absolute top-0 inset-x-0 h-1 bg-gradient-to-r from-[#c5a880]/40 via-[#c5a880] to-[#c5a880]/40"></div>
+            
+            <div className="text-center space-y-2">
+              <div className="inline-flex items-center gap-1.5 px-3 py-1 bg-amber-500/10 border border-amber-500/20 rounded-full text-amber-500 text-[10px] font-bold uppercase tracking-wider">
+                <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse"></span>
+                Aguardando Pagamento Pix
+              </div>
+              <h2 className="font-display font-bold text-lg text-white">Escaneie ou copie o código Pix</h2>
+              <p className="text-xs text-text-secondary leading-relaxed">
+                Para confirmar seu agendamento de <span className="text-[#c5a880] font-bold">R$ {Number(selectedService?.value).toFixed(2).replace('.', ',')}</span> com <span className="text-white font-bold">{selectedBarber?.name}</span>.
+              </p>
+            </div>
+
+            {/* QR Code Presentation */}
+            {pixQrCodeBase64 ? (
+              <div className="flex flex-col items-center justify-center bg-white p-4 rounded-xl max-w-[200px] mx-auto shadow border border-border-dark/20 relative">
+                <img 
+                  src={`data:image/png;base64,${pixQrCodeBase64}`} 
+                  alt="Mercado Pago Pix QR Code"
+                  className="w-full h-full object-contain"
+                />
+              </div>
+            ) : (
+              <div className="flex items-center justify-center h-36 bg-bg-dark-900/60 rounded-xl border border-border-dark">
+                <QrCode className="w-10 h-10 text-text-muted animate-pulse" />
+              </div>
+            )}
+
+            {/* Copy-Paste Key Box */}
+            <div className="space-y-2">
+              <span className="text-[10px] uppercase font-bold tracking-wider text-text-muted pl-1">Código Pix Copia e Cola:</span>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  readOnly
+                  value={pixCopyPaste}
+                  className="flex-1 bg-bg-dark-900 border border-border-dark rounded-xl px-3 py-3 text-xs text-text-primary focus:outline-none font-mono truncate"
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    navigator.clipboard.writeText(pixCopyPaste);
+                    setCopiedPix(true);
+                    setTimeout(() => setCopiedPix(false), 2000);
+                  }}
+                  className="bg-[#c5a880] hover:bg-[#c5a880]/90 text-black font-bold px-4 py-3 rounded-xl text-xs flex items-center gap-1.5 transition-colors cursor-pointer"
+                >
+                  <Copy className="w-4 h-4" />
+                  <span>{copiedPix ? 'Copiado!' : 'Copiar'}</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Auto polling status */}
+            <div className="bg-bg-dark-900/50 rounded-xl border border-border-dark p-4 flex items-center justify-between gap-3 text-xs">
+              <div className="flex items-center gap-2">
+                <div className="w-4 h-4 border-2 border-[#c5a880] border-t-transparent rounded-full animate-spin"></div>
+                <span className="text-text-secondary font-medium animate-pulse">Detectando pagamento automaticamente...</span>
+              </div>
+              <div className="text-right text-[11px] font-mono font-bold text-amber-500">
+                {Math.floor(pixExpiresIn / 60)}:{(pixExpiresIn % 60).toString().padStart(2, '0')}
+              </div>
+            </div>
+
+            {/* Back action */}
+            <div className="pt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setPayingState('idle');
+                  setSubmittingError(null);
+                }}
+                className="w-full btn btn-ghost text-xs font-bold border border-border-dark hover:bg-bg-dark-750 py-3 rounded-xl cursor-pointer text-text-secondary transition-colors"
+              >
+                Cancelar e Voltar para Identificação
+              </button>
+            </div>
+          </div>
+        )}
+
+        {payingState === 'idle' && (
+          <>
+            {/* Tab Selection Switcher */}
         {currentStep === 1 && (
           <div className="flex bg-bg-dark-800 p-1 rounded-xl border border-border-dark/60">
             <button
@@ -843,6 +1465,49 @@ export default function SimpleBooking({ onClose, barbeariaId }: SimpleBookingPro
                 })}
               </div>
             )}
+
+            {/* Banner promocional do Clube de Assinatura */}
+            {showPlanPromo && (
+              <div className="relative bg-gradient-to-br from-[#c5a880]/10 via-[#c5a880]/5 to-transparent border border-[#c5a880]/20 rounded-2xl p-4.5 mt-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 overflow-hidden animate-fade-in shadow-[0_4px_25px_rgba(197,168,128,0.06)]">
+                {/* Background ambient glow */}
+                <div className="absolute top-0 right-0 w-32 h-32 bg-[#c5a880]/10 rounded-full blur-3xl -mr-16 -mt-16 pointer-events-none" />
+                
+                <div className="flex gap-3.5 items-start">
+                  <div className="p-2.5 bg-[#c5a880]/15 border border-[#c5a880]/25 rounded-xl text-[#c5a880] shrink-0 mt-0.5 animate-pulse">
+                    <Sparkles className="w-5 h-5" />
+                  </div>
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-[9px] bg-[#c5a880] text-black font-extrabold uppercase px-1.5 py-0.5 rounded tracking-wider">
+                        Clube VIP 💎
+                      </span>
+                      <h4 className="text-sm font-bold text-white font-display">Economize cortando o mês inteiro!</h4>
+                    </div>
+                    <p className="text-xs text-text-secondary max-w-md leading-relaxed">
+                      Assine um plano mensal de créditos e mantenha seu estilo impecável com até <span className="text-[#c5a880] font-semibold">35% de desconto</span>.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 w-full sm:w-auto shrink-0 justify-end z-10">
+                  <button
+                    type="button"
+                    onClick={() => setViewPlanDetails(true)}
+                    className="flex-1 sm:flex-initial bg-[#c5a880] hover:bg-[#c5a880]/90 text-black text-xs font-bold px-4 py-2.5 rounded-xl transition-all cursor-pointer shadow hover:shadow-[0_4px_12px_rgba(197,168,128,0.2)] active:scale-[0.98]"
+                  >
+                    Ver Planos
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowPlanPromo(false)}
+                    className="p-2.5 hover:bg-bg-dark-750 text-text-muted hover:text-white rounded-xl transition-colors border border-border-dark/60 cursor-pointer flex items-center justify-center"
+                    title="Fechar anúncio"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -993,50 +1658,55 @@ export default function SimpleBooking({ onClose, barbeariaId }: SimpleBookingPro
                 </label>
 
                 <div className="grid grid-cols-4 gap-2">
-                  {businessHours.map((hour) => {
-                    const isTaken = isSlotTaken(hour);
-                    const isSelTime = selectedTime === hour;
-                    
-                    if (isTaken) {
+                  {(() => {
+                    const availableHours = businessHours.filter((hour) => {
+                      const isTaken = isSlotTaken(hour);
+                      const isPast = isSlotInPast(selectedDate, hour);
+                      return !isTaken && !isPast;
+                    });
+
+                    if (availableHours.length === 0) {
                       return (
-                        <div
-                          key={hour}
-                          className="py-2.5 rounded-lg bg-bg-dark-900 border border-border-dark text-text-muted line-through text-xs font-bold text-center select-none cursor-not-allowed opacity-40"
-                          title="Horário Indisponível"
-                        >
-                          {hour}
+                        <div id="no-available-slots" className="col-span-4 p-5 text-center text-xs text-text-secondary bg-bg-dark-800 border border-border-dark rounded-xl flex flex-col items-center justify-center gap-1.5">
+                          <span className="text-lg">📭</span>
+                          <span className="font-bold text-text-primary">Sem horários disponíveis</span>
+                          <span>Todos os horários para este dia já foram reservados ou já passaram.</span>
                         </div>
                       );
                     }
 
-                    return (
-                      <button
-                        type="button"
-                        key={hour}
-                        onClick={() => {
-                          setSelectedTime(hour);
-                        }}
-                        className={`py-2.5 rounded-lg border text-xs font-bold text-center cursor-pointer transition-all ${
-                          isSelTime
-                            ? 'bg-[#c5a880]/20 border-[#c5a880] text-white shadow'
-                            : 'bg-bg-dark-800 border-border-dark text-text-primary hover:border-text-muted hover:bg-bg-dark-750'
-                        }`}
-                      >
-                        {hour}
-                      </button>
-                    );
-                  })}
+                    return availableHours.map((hour) => {
+                      const isSelTime = selectedTime === hour;
+                      return (
+                        <button
+                          type="button"
+                          key={hour}
+                          id={`btn-time-slot-${hour.replace(':', '-')}`}
+                          onClick={() => {
+                            setSelectedTime(hour);
+                          }}
+                          className={`py-2.5 rounded-lg border text-xs font-bold text-center cursor-pointer transition-all ${
+                            isSelTime
+                              ? 'bg-[#c5a880]/20 border-[#c5a880] text-white shadow'
+                              : 'bg-bg-dark-800 border-border-dark text-text-primary hover:border-text-muted hover:bg-bg-dark-750'
+                          }`}
+                        >
+                          {hour}
+                        </button>
+                      );
+                    });
+                  })()}
                 </div>
               </div>
             )}
 
             {/* Navigation action step */}
-            <div className="pt-4 flex justify-end">
+            <div className="fixed bottom-0 left-0 right-0 p-4 bg-bg-dark-850/95 border-t border-border-dark backdrop-blur-md flex justify-end z-30 sm:relative sm:bottom-auto sm:left-auto sm:right-auto sm:p-0 sm:border-t-0 sm:bg-transparent sm:backdrop-blur-none sm:z-auto sm:mt-4">
               <button
                 type="button"
                 disabled={!selectedDate || !selectedTime}
                 onClick={handleNextStep}
-                className="w-full sm:w-auto btn bg-[#c5a880] hover:bg-[#c5a880]/90 text-black text-xs font-bold px-6 py-3 rounded-xl cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed shadow transition-colors flex items-center justify-center gap-1.5"
+                className="w-full sm:w-auto btn bg-[#c5a880] hover:bg-[#c5a880]/90 text-black text-xs font-bold px-6 py-3 rounded-xl cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed shadow transition-colors flex items-center justify-center gap-1.5 active:scale-[0.98]"
               >
                 <span>Avançar para Identificação</span>
                 <ChevronRight className="w-4 h-4 stroke-[2.5]" />
@@ -1075,15 +1745,68 @@ export default function SimpleBooking({ onClose, barbeariaId }: SimpleBookingPro
                   <span>Celular / WhatsApp *</span>
                 </label>
                 <input
-                  type="tel"
+                  type="text"
                   required
                   placeholder="Ex: (35) 99999-9999"
                   value={clientPhone}
-                  onChange={(e) => setClientPhone(e.target.value)}
+                  onChange={(e) => {
+                    const digits = e.target.value.replace(/\D/g, '').slice(0, 11);
+                    let formatted = '';
+                    if (digits.length > 0) {
+                      if (digits.length <= 2) {
+                        formatted = `(${digits}`;
+                      } else if (digits.length <= 6) {
+                        formatted = `(${digits.slice(0, 2)}) ${digits.slice(2)}`;
+                      } else if (digits.length <= 10) {
+                        formatted = `(${digits.slice(0, 2)}) ${digits.slice(2, 6)}-${digits.slice(6)}`;
+                      } else {
+                        formatted = `(${digits.slice(0, 2)}) ${digits.slice(2, 7)}-${digits.slice(7)}`;
+                      }
+                    }
+                    setClientPhone(formatted);
+                  }}
                   className="w-full bg-bg-dark-800 border border-border-dark text-text-primary rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-[#c5a880] transition-colors font-mono font-bold"
                 />
               </div>
             </div>
+
+            {/* Forma de Pagamento */}
+            {((mpConfigured || !!barbeariaInfo?.mercadoPagoAccessToken) && barbeariaInfo?.mercadoPagoEnabled !== false) && (
+              <div className="space-y-2.5 pt-2">
+                <label className="text-xs font-semibold text-text-secondary flex items-center gap-1.5 pl-1">
+                  <CreditCard className="w-4.5 h-4.5 text-brand-amber shrink-0" />
+                  <span>Escolha a Forma de Pagamento *</span>
+                </label>
+                <div className="grid grid-cols-2 gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setPaymentMethod('presencial')}
+                    className={`p-3.5 rounded-xl border flex flex-col items-center justify-center text-center cursor-pointer transition-all ${
+                      paymentMethod === 'presencial'
+                        ? 'bg-[#c5a880]/20 border-[#c5a880] text-white font-bold ring-1 ring-[#c5a880] shadow'
+                        : 'bg-bg-dark-800 border-border-dark text-text-secondary hover:bg-bg-dark-750'
+                    }`}
+                  >
+                    <span className="text-xs font-bold">Pagar no Salão</span>
+                    <span className="text-[10px] opacity-75 mt-0.5 text-text-muted">Dinheiro ou Cartão</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPaymentMethod('mercado_pago_pix')}
+                    className={`p-3.5 rounded-xl border flex flex-col items-center justify-center text-center cursor-pointer transition-all ${
+                      paymentMethod === 'mercado_pago_pix'
+                        ? 'bg-emerald-500/20 border-emerald-500 text-emerald-300 font-bold ring-1 ring-emerald-500 shadow'
+                        : 'bg-bg-dark-800 border-border-dark text-text-secondary hover:bg-bg-dark-750'
+                    }`}
+                  >
+                    <span className="text-xs font-bold text-emerald-400 flex items-center gap-1 justify-center">
+                      Pix Automático ⚡
+                    </span>
+                    <span className="text-[10px] opacity-80 mt-0.5 text-emerald-400/90 font-semibold">Aprovação Imediata</span>
+                  </button>
+                </div>
+              </div>
+            )}
 
             {submittingError && (
               <div className="bg-brand-danger-text/10 border border-brand-danger-border/30 text-brand-danger-text p-4 rounded-xl text-xs font-medium animate-fade-in text-center leading-normal">
@@ -1095,11 +1818,11 @@ export default function SimpleBooking({ onClose, barbeariaId }: SimpleBookingPro
               * Ao clicar em agendar, o horário será reservado no painel do barbeiro. Em seguida você poderá mandar mensagem direta via WhatsApp com apenas um clique!
             </p>
 
-            <div className="border-t border-border-dark pt-4 flex gap-3">
+            <div className="fixed bottom-0 left-0 right-0 p-4 bg-bg-dark-850/95 border-t border-border-dark backdrop-blur-md flex gap-3 z-30 sm:relative sm:bottom-auto sm:left-auto sm:right-auto sm:p-0 sm:border-t-0 sm:bg-transparent sm:backdrop-blur-none sm:z-auto sm:mt-4">
               <button
                 type="button"
                 onClick={handleBackStep}
-                className="flex-1 btn btn-ghost text-xs font-bold border border-border-dark hover:bg-bg-dark-750 px-4 py-3 rounded-xl cursor-pointer text-text-secondary"
+                className="flex-1 btn btn-ghost text-xs font-bold border border-border-dark hover:bg-bg-dark-750 px-4 py-3 rounded-xl cursor-pointer text-text-secondary active:scale-[0.98]"
               >
                 Voltar
               </button>
@@ -1107,14 +1830,315 @@ export default function SimpleBooking({ onClose, barbeariaId }: SimpleBookingPro
               <button
                 type="submit"
                 disabled={bookingLoading || !clientName.trim() || !clientPhone.trim()}
-                className="flex-[2] btn bg-[#c5a880] hover:bg-[#c5a880]/90 text-black text-xs font-bold px-5 py-3 rounded-xl cursor-pointer shadow disabled:opacity-40"
+                className="flex-[2] btn bg-[#c5a880] hover:bg-[#c5a880]/90 text-black text-xs font-bold px-5 py-3 rounded-xl cursor-pointer shadow disabled:opacity-40 disabled:cursor-not-allowed active:scale-[0.98]"
               >
                 {bookingLoading ? 'Agendando...' : 'Agendar Horário'}
               </button>
             </div>
           </form>
         )}
+          </>
+        )}
       </main>
+
+      {/* Detalhes do Clube de Assinatura Modal */}
+      {viewPlanDetails && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-[4px] flex items-center justify-center p-4 z-50 animate-fade-in" onClick={() => setViewPlanDetails(false)}>
+          <div 
+            className="bg-bg-dark-800 border border-border-dark w-full max-w-4xl rounded-2xl p-6 shadow-2xl relative overflow-hidden flex flex-col max-h-[90vh] animate-slide-up"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="absolute top-0 inset-x-0 h-1 bg-[#c5a880] shrink-0"></div>
+            
+            <div className="flex items-center justify-between pb-4 border-b border-border-dark select-none shrink-0">
+              <div className="flex items-center gap-2">
+                <Sparkles className="w-5 h-5 text-[#c5a880] animate-pulse" />
+                <h3 className="font-display font-extrabold text-base sm:text-lg text-white tracking-tight">
+                  Clube de Assinatura Barbearia 💎
+                </h3>
+              </div>
+              <button 
+                onClick={() => setViewPlanDetails(false)} 
+                className="text-text-muted hover:text-white p-1.5 rounded-lg cursor-pointer hover:bg-bg-dark-750 transition-colors"
+              >
+                <X className="w-4.5 h-4.5" />
+              </button>
+            </div>
+
+            <div className="overflow-y-auto flex-1 min-h-0 py-5 pr-1 space-y-6">
+              <div className="text-center max-w-xl mx-auto space-y-2">
+                <p className="text-[10px] sm:text-xs font-bold text-[#c5a880] tracking-widest uppercase">MANTENHA SEU VISUAL SEMPRE IMPECÁVEL</p>
+                <h4 className="text-lg sm:text-xl font-bold text-white font-display">Escolha o plano ideal para o seu estilo</h4>
+                <p className="text-xs text-text-secondary leading-relaxed">
+                  Ao assinar, você garante uma quantidade fixa de cortes e barbas por mês, pagando muito menos do que no avulso e com agendamento prioritário!
+                </p>
+              </div>
+
+              {/* Grid of Plans */}
+              <div className={gridClass}>
+                {activePlansToShow.map((pkg) => {
+                  const planDetails = planInfoLookup[pkg];
+                  const isPremium = pkg === 'Premium';
+                  const pkgServices = barberServices.filter(s => s.package === pkg);
+
+                  return (
+                    <div 
+                      key={pkg}
+                      className={
+                        isPremium
+                          ? "bg-bg-dark-850 border-2 border-[#c5a880] rounded-xl p-5 relative flex flex-col justify-between shadow-[0_8px_30px_rgba(197,168,128,0.1)] hover:scale-[1.01] transition-all"
+                          : "bg-bg-dark-850 border border-border-dark rounded-xl p-5 relative flex flex-col justify-between hover:border-text-muted/45 hover:scale-[1.01] transition-all"
+                      }
+                    >
+                      {isPremium && (
+                        <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-[#c5a880] text-black text-[9px] uppercase font-black px-2.5 py-1 rounded-full tracking-widest whitespace-nowrap shadow-md">
+                          Mais Vendido 🏆
+                        </div>
+                      )}
+                      <div className="space-y-4">
+                        <div className="space-y-1">
+                          <span className={
+                            isPremium
+                              ? "text-[9px] bg-[#c5a880]/20 text-[#c5a880] px-2 py-0.5 rounded-full font-bold border border-[#c5a880]/30"
+                              : "text-[9px] bg-bg-dark-750 text-text-secondary px-2 py-0.5 rounded-full font-bold border border-border-dark"
+                          }>
+                            {planDetails.badge}
+                          </span>
+                          <h5 className="font-display font-bold text-base text-white">{planDetails.title}</h5>
+                          <p className="text-[11px] text-text-secondary leading-relaxed">{planDetails.desc}</p>
+                        </div>
+                        <div className="py-2 border-y border-border-dark/50 flex items-baseline gap-1">
+                          <span className="text-2xl font-black font-mono text-white">R$ {planDetails.price}</span>
+                          <span className="text-xs text-text-muted">/mês</span>
+                        </div>
+                        
+                        <ul className="space-y-2.5 text-xs text-text-secondary">
+                          {planDetails.defaultServices.map((svc, sIdx) => (
+                            <li key={sIdx} className="flex items-start gap-2">
+                              <ShieldCheck className="w-4 h-4 text-[#c5a880] shrink-0 mt-0.5" />
+                              <span>{svc}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                      <div className="pt-6">
+                        {barbeariaInfo?.phone ? (
+                          <a
+                            href={getWhatsAppPlanLink(`${planDetails.title} (${pkg})`)}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className={
+                              isPremium
+                                ? "w-full btn bg-[#c5a880] hover:bg-[#c5a880]/90 text-black text-xs font-extrabold py-2.5 rounded-lg flex items-center justify-center gap-1.5 transition-all cursor-pointer shadow-md hover:shadow-[0_4px_15px_rgba(197,168,128,0.3)]"
+                                : "w-full btn bg-bg-dark-750 hover:bg-bg-dark-700 text-white text-xs font-bold py-2.5 rounded-lg flex items-center justify-center gap-1.5 transition-all cursor-pointer border border-border-dark hover:border-[#c5a880]/30"
+                            }
+                          >
+                            Quero Assinar ⚡
+                          </a>
+                        ) : (
+                          <button
+                            onClick={() => alert('Fale com seu barbeiro no balcão para ativar este plano!')}
+                            className={
+                              isPremium
+                                ? "w-full btn bg-[#c5a880] text-black text-xs font-bold py-2.5 rounded-lg transition-all cursor-pointer"
+                                : "w-full btn bg-bg-dark-750 hover:bg-bg-dark-700 text-white text-xs font-bold py-2.5 rounded-lg transition-all cursor-pointer border border-border-dark"
+                            }
+                          >
+                            Ativar no Balcão ✂️
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Informações adicionais */}
+              <div className="bg-bg-dark-900 border border-border-dark/60 rounded-xl p-4 text-xs text-text-secondary leading-relaxed space-y-2 select-none">
+                <p className="font-bold text-white text-center sm:text-left">💡 Como funcionam os créditos?</p>
+                <p>
+                  As assinaturas são mensais e dão direito a créditos de atendimento em sua conta no portal do cliente. Sempre que você comparecer, o barbeiro apenas desconta o crédito do seu plano. Sem precisar pagar nada na hora!
+                </p>
+                <p className="text-[11px] text-text-muted italic">
+                  * A ativação final e liberação de senha para o portal do cliente são feitas diretamente pelo barbeiro no balcão da barbearia ou via contato no WhatsApp.
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL DE PAGAMENTO PIX AUTOMÁTICO (MERCADO PAGO) */}
+      {(payingState === 'waiting' || payingState === 'generating') && (
+        <div className="fixed inset-0 bg-black/85 backdrop-blur-[6px] flex items-center justify-center p-4 z-50 animate-fade-in select-none">
+          <div className="bg-bg-dark-850 border-2 border-emerald-500/40 w-full max-w-md rounded-2xl p-6 shadow-2xl relative overflow-hidden flex flex-col items-center text-center space-y-4 animate-slide-up">
+            {/* Top glowing bar */}
+            <div className="absolute top-0 inset-x-0 h-1.5 bg-gradient-to-r from-emerald-500 via-teal-400 to-emerald-500"></div>
+
+            {/* Header */}
+            <div className="w-full flex items-center justify-between border-b border-border-dark/60 pb-3">
+              <div className="flex items-center gap-2 text-left">
+                <div className="w-8 h-8 rounded-xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center text-emerald-400">
+                  <CreditCard className="w-4.5 h-4.5" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-white text-sm flex items-center gap-1.5">
+                    <span>Pagamento via Pix</span>
+                    <span className="bg-emerald-500/20 text-emerald-300 text-[9px] px-2 py-0.5 rounded-full font-extrabold uppercase">
+                      Mercado Pago
+                    </span>
+                  </h3>
+                  <p className="text-[10px] text-text-muted">Aprovação imediata após o pagamento</p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setPayingState('idle');
+                  setBookingLoading(false);
+                }}
+                className="text-text-muted hover:text-white p-1 rounded-lg hover:bg-bg-dark-750 transition-colors"
+                title="Fechar e cancelar cobrança"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {payingState === 'generating' ? (
+              <div className="py-12 flex flex-col items-center justify-center space-y-3">
+                <div className="w-10 h-10 border-3 border-emerald-400 border-t-transparent rounded-full animate-spin"></div>
+                <p className="text-xs text-emerald-300 font-semibold animate-pulse">
+                  Gerando chave Pix no Mercado Pago...
+                </p>
+              </div>
+            ) : (
+              <>
+                {/* Value display */}
+                <div className="bg-bg-dark-900 border border-emerald-500/30 rounded-xl p-3.5 w-full flex items-center justify-between">
+                  <div className="text-left">
+                    <span className="text-[10px] uppercase text-text-muted font-bold block">Valor Total</span>
+                    <span className="text-xs text-text-secondary truncate max-w-[180px] block">
+                      {selectedService?.name || 'Serviço'}
+                    </span>
+                  </div>
+                  <span className="text-xl font-mono font-black text-emerald-400">
+                    R$ {(selectedService?.value ? Number(selectedService.value) : 0).toFixed(2).replace('.', ',')}
+                  </span>
+                </div>
+
+                {/* QR Code */}
+                <div className="bg-white p-3 rounded-2xl shadow-inner border-2 border-emerald-500/30 flex items-center justify-center relative">
+                  {pixQrCodeBase64 ? (
+                    <img 
+                      src={`data:image/png;base64,${pixQrCodeBase64}`} 
+                      alt="QR Code Pix" 
+                      className="w-48 h-48 sm:w-52 sm:h-52 object-contain"
+                    />
+                  ) : pixCopyPaste ? (
+                    <img 
+                      src={`https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(pixCopyPaste)}`} 
+                      alt="QR Code Pix" 
+                      className="w-48 h-48 sm:w-52 sm:h-52 object-contain"
+                    />
+                  ) : (
+                    <div className="w-48 h-48 flex items-center justify-center text-xs text-zinc-500">
+                      Carregando QR Code...
+                    </div>
+                  )}
+                </div>
+
+                {/* Pix Copia e Cola Code */}
+                {pixCopyPaste && (
+                  <div className="w-full space-y-1.5 text-left">
+                    <label className="text-[11px] font-semibold text-text-secondary flex items-center justify-between pl-0.5">
+                      <span>Pix Copia e Cola:</span>
+                      <span className="text-[10px] text-emerald-400 font-mono">
+                        Expira em {Math.floor(pixExpiresIn / 60)}:{(pixExpiresIn % 60).toString().padStart(2, '0')}
+                      </span>
+                    </label>
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        readOnly
+                        value={pixCopyPaste}
+                        className="w-full bg-bg-dark-900 border border-border-dark text-text-secondary text-[11px] font-mono rounded-xl px-3 py-2 focus:outline-none select-all truncate"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          try {
+                            navigator.clipboard.writeText(pixCopyPaste);
+                            setCopiedPix(true);
+                            setTimeout(() => setCopiedPix(false), 2500);
+                          } catch (e) {
+                            console.error(e);
+                          }
+                        }}
+                        className={`btn text-xs font-bold px-3.5 py-2 rounded-xl flex items-center gap-1.5 shrink-0 cursor-pointer shadow transition-all ${
+                          copiedPix 
+                            ? 'bg-emerald-500 text-black' 
+                            : 'bg-emerald-600 hover:bg-emerald-500 text-white'
+                        }`}
+                      >
+                        {copiedPix ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                        <span>{copiedPix ? 'Copiado!' : 'Copiar'}</span>
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Real-time waiting indicator */}
+                <div className="w-full bg-emerald-950/30 border border-emerald-500/30 rounded-xl p-3 flex items-center gap-2.5 text-left">
+                  <div className="relative flex h-3 w-3 shrink-0">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
+                  </div>
+                  <div className="text-[11px] leading-tight space-y-0.5">
+                    <p className="text-emerald-300 font-bold">Aguardando pagamento no seu banco...</p>
+                    <p className="text-text-muted text-[10px]">
+                      Assim que você pagar, esta tela confirmará seu horário automaticamente!
+                    </p>
+                  </div>
+                </div>
+
+                {/* Action buttons */}
+                <div className="w-full pt-2 flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPayingState('idle');
+                      setBookingLoading(false);
+                      setPaymentMethod('presencial');
+                    }}
+                    className="flex-1 btn btn-ghost text-xs font-semibold py-2.5 px-3 rounded-xl border border-border-dark hover:bg-bg-dark-750 text-text-secondary transition-colors"
+                  >
+                    Trocar para Pagar no Salão
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPayingState('idle');
+                      setBookingLoading(false);
+                    }}
+                    className="btn btn-ghost text-xs font-semibold py-2.5 px-3 rounded-xl text-text-muted hover:text-red-400 transition-colors"
+                  >
+                    Cancelar
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* FLOATING AI SUPPORT CHAT WIDGET */}
+      <SupportChat
+        barbeariaInfo={barbeariaInfo}
+        services={allServices}
+        plans={Object.values(planInfoLookup)}
+      />
     </div>
   );
 }

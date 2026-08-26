@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { onAuthStateChanged, signOut, User } from 'firebase/auth';
+import { onAuthStateChanged, signOut, signInAnonymously, User } from 'firebase/auth';
 import { 
   collection, 
   doc, 
@@ -14,7 +14,9 @@ import {
   setDoc, 
   deleteDoc, 
   addDoc, 
-  updateDoc 
+  updateDoc,
+  getDoc,
+  getDocs
 } from 'firebase/firestore';
 import { auth, db, handleFirestoreError, OperationType } from './firebase';
 import { Client, Cut, Service } from './types';
@@ -37,7 +39,10 @@ import {
   HelpCircle,
   Calendar,
   Palette,
-  Clock
+  Clock,
+  Smartphone,
+  Download,
+  MessageSquare
 } from 'lucide-react';
 
 // Modular Components
@@ -56,11 +61,15 @@ import Appointments from './components/Appointments';
 import Employees from './components/Employees';
 import Appearance from './components/Appearance';
 import AgendaConfig from './components/AgendaConfig';
+import WhatsAppAutomation from './components/WhatsAppAutomation';
 import ImageUpload from './components/ImageUpload';
+import InstallApp from './components/InstallApp';
+import SupportChat from './components/SupportChat';
 
 export default function App() {
   // Authentication & Loading
   const [user, setUser] = useState<any>(null);
+  const [barberProfile, setBarberProfile] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [seeding, setSeeding] = useState(false);
   
@@ -184,6 +193,7 @@ export default function App() {
   const [saveError, setSaveError] = useState<string | null>(null);
   
   const [serviceModalOpen, setServiceModalOpen] = useState(false);
+  const [editingService, setEditingService] = useState<Service | null>(null);
   
   const [cutModalOpen, setCutModalOpen] = useState(false);
   const [activeCutClientId, setActiveCutClientId] = useState<string | null>(null);
@@ -244,18 +254,31 @@ export default function App() {
   useEffect(() => {
     // Check local storage session for credentials login
     const cached = localStorage.getItem('barberpass_session');
+    let hasLocalSession = false;
     if (cached) {
       try {
         const parsed = JSON.parse(cached);
-        setUser(parsed);
-        setLoading(false);
-        return;
+        if (parsed && (parsed.role === 'client' || parsed.role === 'barber' || parsed.role === 'admin')) {
+          setUser(parsed);
+          setLoading(false);
+          hasLocalSession = true;
+        }
       } catch (e) {
         console.error('Failed to parse cached session', e);
       }
     }
 
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+      // Ensure anonymous sign in if no firebase user exists so firestore operations never fail
+      if (!currentUser && hasLocalSession) {
+        try {
+          await signInAnonymously(auth);
+        } catch (e) {
+          console.warn('Background anonymous auth attempt:', e);
+        }
+        return;
+      }
+
       if (currentUser) {
         // Read cached session first to prevent anonymous login overwrites
         const activeCached = localStorage.getItem('barberpass_session');
@@ -311,6 +334,25 @@ export default function App() {
     });
     return () => unsubscribe();
   }, []);
+
+  // Sync logged-in barber's profile
+  useEffect(() => {
+    if (!user || user.role !== 'barber') {
+      setBarberProfile(null);
+      return;
+    }
+
+    const docRef = doc(db, 'barbers', user.uid);
+    const unsubscribe = onSnapshot(docRef, (docSnap) => {
+      if (docSnap.exists()) {
+        setBarberProfile({ id: docSnap.id, ...docSnap.data() });
+      }
+    }, (error) => {
+      console.error('Error syncing barber profile:', error);
+    });
+
+    return () => unsubscribe();
+  }, [user?.uid, user?.role]);
 
   // 2. Real-time Subscribers syncing
   useEffect(() => {
@@ -453,8 +495,8 @@ export default function App() {
     const valNum = parseFloat(cValue);
     const dueNum = parseInt(cDue);
 
-    if (!nameStr || isNaN(valNum) || isNaN(dueNum) || dueNum < 1 || dueNum > 28) {
-      triggerToast('Preencha nome completo, valor de cobrança e vencimento (1 a 28).');
+    if (!nameStr || isNaN(valNum) || isNaN(dueNum) || dueNum < 1 || dueNum > 31) {
+      triggerToast('Preencha nome completo, valor de cobrança e vencimento (1 a 31).');
       return;
     }
 
@@ -558,10 +600,109 @@ export default function App() {
 
   const handleDeleteClient = (clientId: string, clientName: string) => {
     setConfirmConfig({
-      title: 'Remover Assinante',
-      message: `Tem certeza que deseja excluir permanentemente o cliente "${clientName}"? Todos os relatórios de atendimento associados a este cadastro também serão apagados do sistema.`,
+      title: 'Remover Assinante & Liberar Horários',
+      message: `Tem certeza que deseja excluir permanentemente o cliente "${clientName}"? Todos os horários fixos de assinatura, reservas na grade e histórico associados a este cliente serão excluídos e ficarão livres para novos agendamentos.`,
       onConfirm: async () => {
         try {
+          const targetClient = clients.find(c => c.id === clientId);
+          const rawClientPhone = targetClient?.phone || '';
+          const cleanClientPhone = rawClientPhone.replace(/\D/g, '');
+          const normalizedClientName = (targetClient?.name || clientName || '').trim().toLowerCase();
+
+          // 1. Delete cuts subcollection in clients/{clientId}/cuts
+          try {
+            const cutsSnapshot = await getDocs(collection(db, 'clients', clientId, 'cuts'));
+            for (const cutDoc of cutsSnapshot.docs) {
+              await deleteDoc(doc(db, 'clients', clientId, 'cuts', cutDoc.id));
+            }
+          } catch (e) {
+            console.warn('Could not clear cuts subcollection:', e);
+          }
+
+          // 2. Clear recurring fixed slots (plano/assinatura) from main barber profile
+          if (user?.uid) {
+            try {
+              const barberRef = doc(db, 'barbers', user.uid);
+              const barberSnap = await getDoc(barberRef);
+              if (barberSnap.exists()) {
+                const barberData = barberSnap.data();
+                const recSlots = barberData?.scheduleSettings?.recurringSlots;
+                if (Array.isArray(recSlots)) {
+                  const filteredSlots = recSlots.filter((slot: any) => {
+                    const slotPhone = slot.clientPhone ? slot.clientPhone.replace(/\D/g, '') : '';
+                    const slotName = (slot.clientName || '').trim().toLowerCase();
+                    const isMatch = slot.clientId === clientId ||
+                      (cleanClientPhone && slotPhone && slotPhone === cleanClientPhone) ||
+                      (normalizedClientName && slotName && slotName === normalizedClientName);
+                    return !isMatch;
+                  });
+
+                  if (filteredSlots.length !== recSlots.length) {
+                    await updateDoc(barberRef, {
+                      'scheduleSettings.recurringSlots': filteredSlots
+                    });
+                  }
+                }
+              }
+            } catch (e) {
+              console.warn('Could not update barber recurring slots:', e);
+            }
+          }
+
+          // 3. Clear recurring fixed slots from all staff employees
+          try {
+            const empColRef = collection(db, 'barber_employees');
+            const empSnap = await getDocs(empColRef);
+            for (const empDoc of empSnap.docs) {
+              const empData = empDoc.data();
+              if (empData.barbeariaId === user?.uid || !empData.barbeariaId) {
+                const recSlots = empData?.scheduleSettings?.recurringSlots;
+                if (Array.isArray(recSlots)) {
+                  const filteredSlots = recSlots.filter((slot: any) => {
+                    const slotPhone = slot.clientPhone ? slot.clientPhone.replace(/\D/g, '') : '';
+                    const slotName = (slot.clientName || '').trim().toLowerCase();
+                    const isMatch = slot.clientId === clientId ||
+                      (cleanClientPhone && slotPhone && slotPhone === cleanClientPhone) ||
+                      (normalizedClientName && slotName && slotName === normalizedClientName);
+                    return !isMatch;
+                  });
+
+                  if (filteredSlots.length !== recSlots.length) {
+                    await updateDoc(doc(db, 'barber_employees', empDoc.id), {
+                      'scheduleSettings.recurringSlots': filteredSlots
+                    });
+                  }
+                }
+              }
+            }
+          } catch (e) {
+            console.warn('Could not update employee recurring slots:', e);
+          }
+
+          // 4. Clear all reservations / guest_bookings for this client to free up the grid
+          try {
+            const bookingsCol = collection(db, 'guest_bookings');
+            const bookingsSnap = await getDocs(bookingsCol);
+            for (const bDoc of bookingsSnap.docs) {
+              const bData = bDoc.data();
+              const isBarbearia = !bData.barbeariaId || bData.barbeariaId === user?.uid || (targetClient?.ownerId && bData.barbeariaId === targetClient.ownerId);
+              if (isBarbearia) {
+                const bPhone = bData.clientPhone ? bData.clientPhone.replace(/\D/g, '') : '';
+                const bName = (bData.clientName || '').trim().toLowerCase();
+                const isMatch = bData.clientId === clientId ||
+                  (cleanClientPhone && bPhone && bPhone === cleanClientPhone) ||
+                  (normalizedClientName && bName && bName === normalizedClientName);
+
+                if (isMatch) {
+                  await deleteDoc(doc(db, 'guest_bookings', bDoc.id));
+                }
+              }
+            }
+          } catch (e) {
+            console.warn('Could not clear guest_bookings:', e);
+          }
+
+          // 5. Delete client document
           const clientRef = doc(db, 'clients', clientId);
           await deleteDoc(clientRef);
           
@@ -569,9 +710,9 @@ export default function App() {
             setActiveClientId(null);
             setCurrentPage('clients');
           }
-          triggerToast('Assinante removido.');
+          triggerToast(`Cliente "${clientName}" e todos os seus horários reservados foram excluídos e liberados na grade!`);
         } catch (error) {
-          console.error('Error deleting client:', error);
+          console.error('Error deleting client and freeing reserved slots:', error);
           handleFirestoreError(error, OperationType.DELETE, 'clients/' + clientId);
         }
       }
@@ -669,11 +810,22 @@ export default function App() {
 
   // SERVICES CRUD OPERATIONS
   const openAddServiceModal = () => {
+    setEditingService(null);
     setSName('');
     setSDesc('');
     setSValue('');
     setSPackage('Todos');
     setSImageUrl('');
+    setServiceModalOpen(true);
+  };
+
+  const openEditServiceModal = (service: Service) => {
+    setEditingService(service);
+    setSName(service.name);
+    setSDesc(service.desc || '');
+    setSValue(String(service.value));
+    setSPackage(service.package);
+    setSImageUrl(service.imageUrl || '');
     setServiceModalOpen(true);
   };
 
@@ -688,20 +840,34 @@ export default function App() {
     }
 
     try {
-      const newServiceId = `svc_${user.uid}_${Date.now()}`;
-      const serviceRef = doc(db, 'services', newServiceId);
-      
-      await setDoc(serviceRef, {
-        id: newServiceId,
-        name: nameStr,
-        desc: sDesc.trim(),
-        value: valNum,
-        package: sPackage,
-        ownerId: user.uid,
-        imageUrl: sImageUrl.trim()
-      });
+      if (editingService) {
+        const serviceRef = doc(db, 'services', editingService.id);
+        await setDoc(serviceRef, {
+          id: editingService.id,
+          name: nameStr,
+          desc: sDesc.trim(),
+          value: valNum,
+          package: sPackage,
+          ownerId: editingService.ownerId || user.uid,
+          imageUrl: sImageUrl.trim()
+        });
+        triggerToast('Serviço atualizado com sucesso!');
+      } else {
+        const newServiceId = `svc_${user.uid}_${Date.now()}`;
+        const serviceRef = doc(db, 'services', newServiceId);
+        
+        await setDoc(serviceRef, {
+          id: newServiceId,
+          name: nameStr,
+          desc: sDesc.trim(),
+          value: valNum,
+          package: sPackage,
+          ownerId: user.uid,
+          imageUrl: sImageUrl.trim()
+        });
 
-      triggerToast('Serviço cadastrado com sucesso!');
+        triggerToast('Serviço cadastrado com sucesso!');
+      }
       setServiceModalOpen(false);
     } catch (error) {
       console.error('Error saving service:', error);
@@ -827,6 +993,8 @@ export default function App() {
             allCuts={allCuts} 
             onNavigate={navigateToPage} 
             user={user}
+            featureAlertsEnabled={barberProfile?.featureAlertsEnabled !== false}
+            barberProfile={barberProfile}
           />
         );
       case 'clients':
@@ -837,6 +1005,7 @@ export default function App() {
             onEditClient={openEditClientModal}
             onDeleteClient={handleDeleteClient}
             onOpenAddModal={openAddClientModal}
+            barberProfile={barberProfile}
           />
         );
       case 'detail':
@@ -851,14 +1020,20 @@ export default function App() {
             onRemoveCut={handleRemoveCut}
             onToggleStatus={handleToggleStatus}
             onToggleChecklistItem={handleToggleChecklistItem}
+            barberProfile={barberProfile}
           />
         ) : null;
       case 'services':
         return (
           <Services
             services={services}
+            clients={clients}
             onOpenAddModal={openAddServiceModal}
+            onEditService={openEditServiceModal}
             onDeleteService={handleDeleteService}
+            user={user}
+            barberProfile={barberProfile}
+            triggerToast={triggerToast}
           />
         );
       case 'payments':
@@ -867,13 +1042,47 @@ export default function App() {
             clients={clients}
             onToggleStatusFromPayments={handleToggleStatus}
             onNavigate={navigateToPage}
+            barberProfile={barberProfile}
           />
         );
       case 'alerts':
+        if (barberProfile && barberProfile.featureAlertsEnabled === false) {
+          return (
+            <div className="flex-1 flex flex-col items-center justify-center p-8 text-center bg-bg-dark-950 min-h-[500px]">
+              <div className="w-16 h-16 rounded-full bg-brand-amber/10 border border-brand-amber/20 flex items-center justify-center mb-5 animate-pulse">
+                <Bell className="w-8 h-8 text-brand-amber" />
+              </div>
+              <h2 className="text-xl font-extrabold text-white mb-2">Avisos e Disparos Inteligentes</h2>
+              <p className="text-sm text-text-secondary max-w-md mb-6 leading-relaxed">
+                O recurso de lembretes, avisos de mensalidades e alertas automatizados de clientes atrasados não está disponível no seu plano atual. Entre em contato com o suporte para fazer o upgrade e turbinar seu atendimento!
+              </p>
+              <div className="bg-bg-dark-800 border border-border-dark p-4 rounded-2xl max-w-sm mb-8 text-left">
+                <span className="text-xs font-bold text-brand-amber block mb-2">💎 Funcionalidades Inclusas no Upgrade:</span>
+                <ul className="text-xs text-text-muted space-y-2 list-disc list-inside">
+                  <li>Alertas automáticos de clientes sumidos ou pendentes</li>
+                  <li>Disparos ultra-rápidos e formatados para o WhatsApp</li>
+                  <li>Notificações e gestão ativa de cobranças e faturas</li>
+                </ul>
+              </div>
+              <a 
+                href="https://api.whatsapp.com/send?phone=5511999999999&text=Ol%C3%A1! Gostaria de fazer o upgrade do meu plano para liberar a função de Avisos e Mensagens no BarberPass."
+                target="_blank"
+                rel="noreferrer"
+                className="px-6 py-3 bg-brand-amber hover:bg-brand-amber-hover text-black text-xs font-bold rounded-xl transition-all shadow flex items-center gap-2 cursor-pointer"
+              >
+                Solicitar Upgrade do Plano ⚡
+              </a>
+            </div>
+          );
+        }
         return (
           <Alerts
             clients={clients}
+            rawCutsMap={rawCutsMap}
+            user={user}
             onConfirmPayment={(id) => handleToggleStatus(id, 'atrasado')}
+            triggerToast={triggerToast}
+            barberProfile={barberProfile}
           />
         );
       case 'agenda':
@@ -881,6 +1090,16 @@ export default function App() {
           <AgendaConfig
             user={user}
             triggerToast={triggerToast}
+            clients={clients}
+          />
+        );
+      case 'whatsapp':
+        return (
+          <WhatsAppAutomation
+            user={user}
+            clients={clients}
+            triggerToast={triggerToast}
+            barberProfile={barberProfile}
           />
         );
       case 'appearance':
@@ -909,14 +1128,45 @@ export default function App() {
         return (
           <Appointments
             user={user}
+            clients={clients}
             triggerToast={triggerToast}
             openConfirmModal={(title, message, onConfirm) => {
               setConfirmConfig({ title, message, onConfirm });
               setConfirmModalOpen(true);
             }}
+            featureAlertsEnabled={barberProfile?.featureAlertsEnabled !== false}
           />
         );
       case 'employees':
+        if (barberProfile && barberProfile.featureEmployeesEnabled === false) {
+          return (
+            <div className="flex-1 flex flex-col items-center justify-center p-8 text-center bg-bg-dark-950 min-h-[500px]">
+              <div className="w-16 h-16 rounded-full bg-brand-amber/10 border border-brand-amber/20 flex items-center justify-center mb-5 animate-pulse">
+                <Scissors className="w-8 h-8 text-brand-amber" />
+              </div>
+              <h2 className="text-xl font-extrabold text-white mb-2">Múltiplos Barbeiros & Equipe</h2>
+              <p className="text-sm text-text-secondary max-w-md mb-6 leading-relaxed">
+                O recurso de gerenciar colaboradores, cadastrar novos barbeiros e distribuir comissões da sua equipe não está liberado no seu plano atual. Faça o upgrade agora para expandir seu negócio!
+              </p>
+              <div className="bg-bg-dark-800 border border-border-dark p-4 rounded-2xl max-w-sm mb-8 text-left">
+                <span className="text-xs font-bold text-brand-amber block mb-2">💎 Funcionalidades Inclusas no Upgrade:</span>
+                <ul className="text-xs text-text-muted space-y-2 list-disc list-inside">
+                  <li>Cadastro ilimitado de funcionários e profissionais</li>
+                  <li>Divisão automática de faturamento e agendamentos</li>
+                  <li>Agendas e horários individuais de atendimento</li>
+                </ul>
+              </div>
+              <a 
+                href="https://api.whatsapp.com/send?phone=5511999999999&text=Ol%C3%A1! Gostaria de fazer o upgrade do meu plano para liberar a função de Equipe e Funcionários no BarberPass."
+                target="_blank"
+                rel="noreferrer"
+                className="px-6 py-3 bg-brand-amber hover:bg-brand-amber-hover text-black text-xs font-bold rounded-xl transition-all shadow flex items-center gap-2 cursor-pointer"
+              >
+                Solicitar Upgrade do Plano ⚡
+              </a>
+            </div>
+          );
+        }
         return (
           <Employees
             user={user}
@@ -926,6 +1176,10 @@ export default function App() {
               setConfirmModalOpen(true);
             }}
           />
+        );
+      case 'install':
+        return (
+          <InstallApp triggerToast={triggerToast} />
         );
       default:
         return null;
@@ -1163,6 +1417,28 @@ export default function App() {
                   {user?.role === 'barber' && (
                     <button
                       onClick={() => {
+                        navigateToPage('whatsapp');
+                        setMobileMenuOpen(false);
+                      }}
+                      className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-xs font-semibold cursor-pointer transition-all ${
+                        currentPage === 'whatsapp'
+                          ? 'bg-brand-amber-bg text-brand-amber border border-brand-amber-border/40'
+                          : 'text-text-secondary hover:bg-bg-dark-700 hover:text-text-primary border border-transparent'
+                      }`}
+                    >
+                      <div className="flex items-center gap-3">
+                        <MessageSquare className="w-4 h-4 shrink-0 text-emerald-400" />
+                        <span>Automação WhatsApp</span>
+                      </div>
+                      <span className="bg-emerald-500/20 text-emerald-400 text-[9px] font-bold px-1.5 py-0.5 rounded">
+                        API
+                      </span>
+                    </button>
+                  )}
+
+                  {user?.role === 'barber' && (
+                    <button
+                      onClick={() => {
                         navigateToPage('agenda');
                         setMobileMenuOpen(false);
                       }}
@@ -1218,6 +1494,27 @@ export default function App() {
                   </button>
                 </div>
               )}
+
+              {/* Section: APLICATIVO */}
+              <div className="space-y-1">
+                <div className="nav-section text-[9px] font-bold text-text-muted uppercase tracking-widest px-3 mb-1.5">
+                  Aplicativo
+                </div>
+                <button
+                  onClick={() => {
+                    navigateToPage('install');
+                    setMobileMenuOpen(false);
+                  }}
+                  className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-xs font-semibold cursor-pointer transition-all ${
+                    currentPage === 'install'
+                      ? 'bg-brand-amber-bg text-brand-amber border border-brand-amber-border/40'
+                      : 'text-text-secondary hover:bg-bg-dark-700 hover:text-text-primary border border-transparent'
+                  }`}
+                >
+                  <Smartphone className="w-4 h-4 shrink-0" />
+                  <span>Instalar no Celular 📱</span>
+                </button>
+              </div>
             </nav>
 
             {/* Mobile Drawer Footer User Card */}
@@ -1389,7 +1686,32 @@ export default function App() {
 
                 {user?.role === 'barber' && (
                   <button
-                    onClick={() => navigateToPage('agenda')}
+                    onClick={() => {
+                      navigateToPage('whatsapp');
+                      setMobileMenuOpen(false);
+                    }}
+                    className={`nav-item w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-xs font-semibold cursor-pointer transition-all ${
+                      currentPage === 'whatsapp'
+                        ? 'bg-brand-amber-bg text-brand-amber border border-brand-amber-border/40'
+                        : 'text-text-secondary hover:bg-bg-dark-700 hover:text-text-primary border border-transparent'
+                    }`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <MessageSquare className="w-4 h-4 shrink-0 text-emerald-400" />
+                      <span>Automação WhatsApp</span>
+                    </div>
+                    <span className="bg-emerald-500/20 text-emerald-400 text-[9px] font-bold px-1.5 py-0.5 rounded">
+                      API
+                    </span>
+                  </button>
+                )}
+
+                {user?.role === 'barber' && (
+                  <button
+                    onClick={() => {
+                      navigateToPage('agenda');
+                      setMobileMenuOpen(false);
+                    }}
                     className={`nav-item w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-xs font-semibold cursor-pointer transition-all ${
                       currentPage === 'agenda'
                         ? 'bg-brand-amber-bg text-brand-amber border border-brand-amber-border/40'
@@ -1436,6 +1758,24 @@ export default function App() {
                 </button>
               </div>
             )}
+
+            {/* Section: APLICATIVO */}
+            <div className="space-y-1">
+              <div className="nav-section text-[9px] font-bold text-text-muted uppercase tracking-widest px-3 mb-2">
+                Aplicativo
+              </div>
+              <button
+                onClick={() => navigateToPage('install')}
+                className={`nav-item w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-xs font-semibold cursor-pointer transition-all ${
+                  currentPage === 'install'
+                    ? 'bg-brand-amber-bg text-brand-amber border border-brand-amber-border/40'
+                    : 'text-text-secondary hover:bg-bg-dark-700 hover:text-text-primary border border-transparent'
+                }`}
+              >
+                <Smartphone className="w-4 h-4 shrink-0" />
+                <span>Baixar Aplicativo 📱</span>
+              </button>
+            </div>
           </nav>
         </div>
 
@@ -1514,10 +1854,26 @@ export default function App() {
               <div className="grid grid-cols-1 gap-2">
                 <label className="text-xs font-medium text-text-secondary">Telefone celular</label>
                 <input
-                  type="tel"
+                  type="text"
                   placeholder="Ex: (35) 98888-1111"
                   value={cPhone}
-                  onChange={e => setCPhone(e.target.value)}
+                  onChange={(e) => {
+                    const digits = e.target.value.replace(/\D/g, '').slice(0, 11);
+                    let formatted = '';
+                    if (digits.length > 0) {
+                      if (digits.length <= 2) {
+                        formatted = `(${digits}`;
+                      } else if (digits.length <= 6) {
+                        formatted = `(${digits.slice(0, 2)}) ${digits.slice(2)}`;
+                      } else if (digits.length <= 10) {
+                        formatted = `(${digits.slice(0, 2)}) ${digits.slice(2, 6)}-${digits.slice(6)}`;
+                      } else {
+                        formatted = `(${digits.slice(0, 2)}) ${digits.slice(2, 7)}-${digits.slice(7)}`;
+                      }
+                    }
+                    setCPhone(formatted);
+                  }}
+                  className="font-mono font-bold"
                 />
               </div>
 
@@ -1607,46 +1963,59 @@ export default function App() {
                     onChange={e => {
                       const selPkg = e.target.value as 'Básico' | 'Premium' | 'VIP';
                       setCPackage(selPkg);
-                      // Auto-fill default packages pricing and checklists
-                      if (selPkg === 'Básico') {
-                        setCValue('70');
-                        setCChecklist(getDefaultChecklist('Básico').map(x => x.serviceName));
-                      } else if (selPkg === 'Premium') {
-                        setCValue('120');
-                        setCChecklist(getDefaultChecklist('Premium').map(x => x.serviceName));
-                      } else if (selPkg === 'VIP') {
-                        setCValue('200');
-                        setCChecklist(getDefaultChecklist('VIP').map(x => x.serviceName));
-                      }
+                      const customPlans = barberProfile?.plans || {};
+                      const planPrice = customPlans[selPkg]?.price !== undefined ? String(customPlans[selPkg].price) : (selPkg === 'Básico' ? '70' : selPkg === 'Premium' ? '120' : '200');
+                      const planBenefits = customPlans[selPkg]?.checklistTemplate || customPlans[selPkg]?.services || getDefaultChecklist(selPkg).map(x => x.serviceName);
+                      setCValue(planPrice);
+                      setCChecklist(planBenefits);
                     }}
-                    className="cursor-pointer"
+                    className="cursor-pointer font-bold text-text-primary bg-bg-dark-900 border border-border-dark rounded-xl h-9 text-xs px-2"
                   >
-                    <option>Básico</option>
-                    <option>Premium</option>
-                    <option>VIP</option>
+                    <option value="Básico">{barberProfile?.plans?.Básico?.name || 'Plano Essencial'}</option>
+                    <option value="Premium">{barberProfile?.plans?.Premium?.name || 'Plano Cavalheiro'}</option>
+                    <option value="VIP">{barberProfile?.plans?.VIP?.name || 'Plano Executivo'}</option>
                   </select>
                 </div>
                 <div className="flex flex-col gap-2">
                   <label className="text-xs font-medium text-text-secondary">Mensalidade (R$) *</label>
                   <input
-                    type="number"
+                    type="text"
                     placeholder="Ex: 120"
                     value={cValue}
-                    onChange={e => setCValue(e.target.value)}
+                    onChange={e => {
+                      const val = e.target.value.replace(/\D/g, '');
+                      if (val.length <= 4) {
+                        setCValue(val);
+                      }
+                    }}
+                    className="font-mono font-bold"
                   />
                 </div>
               </div>
 
               {/* Billing Due day */}
               <div className="grid grid-cols-1 gap-2">
-                <label className="text-xs font-medium text-text-secondary">Dia de vencimento da mensalidade (1 a 28) *</label>
+                <label className="text-xs font-medium text-text-secondary">Dia de vencimento da mensalidade (1 a 31) *</label>
                 <input
-                  type="number"
+                  type="text"
                   placeholder="Ex: 10"
-                  min="1"
-                  max="28"
                   value={cDue}
-                  onChange={e => setCDue(e.target.value)}
+                  onChange={e => {
+                    const val = e.target.value.replace(/\D/g, '');
+                    if (val === '') {
+                      setCDue('');
+                      return;
+                    }
+                    const num = parseInt(val, 10);
+                    if (num > 31) {
+                      setCDue('31');
+                    } else if (num === 0) {
+                      setCDue('');
+                    } else {
+                      setCDue(val.slice(0, 2));
+                    }
+                  }}
+                  className="font-mono font-bold"
                 />
               </div>
 
@@ -1658,7 +2027,7 @@ export default function App() {
                   </label>
                   <button
                     type="button"
-                    onClick={() => setCChecklist([...cChecklist, 'Corte simples'])}
+                    onClick={() => setCChecklist([...cChecklist, services[0]?.name || 'Corte simples'])}
                     className="text-[10px] bg-bg-dark-750 hover:bg-bg-dark-700 border border-border-dark rounded px-2.5 py-1 text-brand-amber cursor-pointer flex items-center gap-1 font-semibold"
                   >
                     + Adicionar Serviço
@@ -1674,17 +2043,38 @@ export default function App() {
                         <span className="text-[10px] text-text-muted font-mono bg-bg-dark-750 px-2 py-1.5 rounded border border-border-dark shrink-0">
                           Serviço {idx + 1}
                         </span>
-                        <input
-                          type="text"
-                          value={srvName}
-                          onChange={(e) => {
-                            const updated = [...cChecklist];
-                            updated[idx] = e.target.value;
-                            setCChecklist(updated);
-                          }}
-                          placeholder="Nome do serviço"
-                          className="flex-grow py-1 px-2.5 text-xs h-8 rounded border border-border-dark bg-bg-dark-900"
-                        />
+                        {services.length === 0 ? (
+                          <input
+                            type="text"
+                            value={srvName}
+                            onChange={(e) => {
+                              const updated = [...cChecklist];
+                              updated[idx] = e.target.value;
+                              setCChecklist(updated);
+                            }}
+                            placeholder="Nome do serviço"
+                            className="flex-grow py-1 px-2.5 text-xs h-8 rounded border border-border-dark bg-bg-dark-900"
+                          />
+                        ) : (
+                          <select
+                            value={srvName}
+                            onChange={(e) => {
+                              const updated = [...cChecklist];
+                              updated[idx] = e.target.value;
+                              setCChecklist(updated);
+                            }}
+                            className="flex-grow py-1 px-2 text-xs h-8 rounded border border-border-dark bg-bg-dark-900 cursor-pointer font-sans"
+                          >
+                            {!services.some(s => s.name === srvName) && srvName.trim() && (
+                              <option value={srvName}>{srvName} (Customizado)</option>
+                            )}
+                            {services.map(s => (
+                              <option key={s.id} value={s.name}>
+                                {s.name}
+                              </option>
+                            ))}
+                          </select>
+                        )}
                         <button
                           type="button"
                           onClick={() => {
@@ -1771,7 +2161,9 @@ export default function App() {
         <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && setServiceModalOpen(false)}>
           <div className="modal bg-bg-dark-800 border-border-dark shadow-2xl relative w-full max-w-md rounded-2xl overflow-hidden animate-fade-in">
             <div className="modal-header border-b border-border-dark p-5 flex justify-between items-center bg-bg-dark-850">
-              <h3 className="text-sm font-semibold text-text-primary font-sans">Novo serviço</h3>
+              <h3 className="text-sm font-semibold text-text-primary font-sans">
+                {editingService ? 'Editar serviço' : 'Novo serviço'}
+              </h3>
               <button onClick={() => setServiceModalOpen(false)} className="modal-close text-text-muted hover:text-text-primary p-1 rounded-lg cursor-pointer">
                 <X className="w-4.5 h-4.5" />
               </button>
@@ -1807,7 +2199,7 @@ export default function App() {
                 aspectRatioLabel="Proporção 1:1"
               />
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1">
                 <div className="flex flex-col gap-2">
                   <label className="text-xs font-medium text-text-secondary">Preço base (R$) *</label>
                   <input
@@ -1816,19 +2208,6 @@ export default function App() {
                     value={sValue}
                     onChange={e => setSValue(e.target.value)}
                   />
-                </div>
-                <div className="flex flex-col gap-2">
-                  <label className="text-xs font-medium text-text-secondary">Inclusão em Pacote</label>
-                  <select
-                    value={sPackage}
-                    onChange={e => setSPackage(e.target.value as any)}
-                    className="cursor-pointer"
-                  >
-                    <option>Todos</option>
-                    <option>Básico</option>
-                    <option>Premium</option>
-                    <option>VIP</option>
-                  </select>
                 </div>
               </div>
             </div>
@@ -1956,6 +2335,12 @@ export default function App() {
           <span>{toast.message}</span>
         </div>
       )}
+
+      {/* FLOATING AI SUPPORT CHAT WIDGET */}
+      <SupportChat
+        barbeariaInfo={barberProfile}
+        services={services}
+      />
     </div>
   );
 }

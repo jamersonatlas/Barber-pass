@@ -101,7 +101,7 @@ html, body, #root {
   @apply h-full bg-gradient-to-r from-brand-amber to-brand-amber-hover rounded-[4px];
 }
 
-input, select, textarea {
+input:not([type="checkbox"]):not([type="radio"]), select, textarea {
   @apply bg-bg-dark-700 border border-border-dark text-text-primary rounded-lg px-3 py-2 w-full transition-colors focus:border-brand-amber focus:ring-2 focus:ring-brand-amber/10 focus:outline-none;
 }
 

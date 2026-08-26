@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Search, Plus, Eye, Edit3, Trash2, SlidersHorizontal, CheckSquare, Phone, X } from 'lucide-react';
 import { Client } from '../types';
-import { fmtMoney, initials } from '../utils';
+import { fmtMoney, initials, getAdjustedDueDay } from '../utils';
 
 interface ClientsProps {
   clients: Client[];
@@ -10,12 +10,23 @@ interface ClientsProps {
   onEditClient: (client: Client) => void;
   onDeleteClient: (id: string, name: string) => void;
   onOpenAddModal: () => void;
+  barberProfile?: any;
 }
 
-export default function Clients({ clients, onViewDetail, onEditClient, onDeleteClient, onOpenAddModal }: ClientsProps) {
+export default function Clients({ clients, onViewDetail, onEditClient, onDeleteClient, onOpenAddModal, barberProfile }: ClientsProps) {
   const [search, setSearch] = useState('');
   const [packageFilter, setPackageFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
+
+  const getPlanName = (pId: string) => {
+    if (barberProfile?.plans?.[pId]?.name) {
+      return barberProfile.plans[pId].name;
+    }
+    if (pId === 'Básico') return 'Plano Essencial';
+    if (pId === 'Premium') return 'Plano Cavalheiro';
+    if (pId === 'VIP') return 'Plano Executivo';
+    return pId;
+  };
 
   // Filtering Logic
   const filteredClients = clients.filter(c => {
@@ -72,12 +83,21 @@ export default function Clients({ clients, onViewDetail, onEditClient, onDeleteC
             <select
               value={packageFilter}
               onChange={e => setPackageFilter(e.target.value)}
-              className="h-10 text-xs bg-bg-dark-700 border-border-dark cursor-pointer font-medium"
+              className="h-10 text-xs bg-bg-dark-700 border-border-dark cursor-pointer font-medium text-text-primary px-2 rounded-xl"
             >
               <option value="">Todos os pacotes</option>
-              <option>Básico</option>
-              <option>Premium</option>
-              <option>VIP</option>
+              {(() => {
+                const ids = new Set<string>(['Básico', 'Premium', 'VIP']);
+                if (barberProfile?.plans) {
+                  Object.keys(barberProfile.plans).forEach(id => ids.add(id));
+                }
+                clients.forEach(c => {
+                  if (c.package) ids.add(c.package);
+                });
+                return Array.from(ids).map(id => (
+                  <option key={id} value={id}>{getPlanName(id)}</option>
+                ));
+              })()}
             </select>
           </div>
 
@@ -147,7 +167,7 @@ export default function Clients({ clients, onViewDetail, onEditClient, onDeleteC
                       {/* Package badge cell */}
                       <td className="py-3.5 px-4">
                         <span className="bg-brand-amber-bg text-brand-amber border border-brand-amber-border text-[10px] px-2.5 py-0.5 rounded-full font-medium">
-                          {c.package}
+                          {getPlanName(c.package)}
                         </span>
                       </td>
 
@@ -157,8 +177,8 @@ export default function Clients({ clients, onViewDetail, onEditClient, onDeleteC
                       </td>
 
                       {/* Due day cell */}
-                      <td className="py-3.5 px-4 text-xs text-text-secondary">
-                        Dia {c.due}
+                      <td className="py-3.5 px-4 text-xs text-text-secondary" title={getAdjustedDueDay(c.due).isAdjusted ? `Ajustado do dia original ${c.due} pois este mês é mais curto` : undefined}>
+                        Dia {getAdjustedDueDay(c.due).day}{getAdjustedDueDay(c.due).isAdjusted ? '*' : ''}
                       </td>
 
                       {/* Status badge cell */}
@@ -249,8 +269,8 @@ export default function Clients({ clients, onViewDetail, onEditClient, onDeleteC
                   {/* Mid grid: Package Details */}
                   <div className="grid grid-cols-3 gap-1 bg-bg-dark-900/60 p-3 rounded-xl border border-border-dark/60 text-center shrink-0 select-none">
                     <div>
-                      <div className="text-[10px] uppercase text-text-muted font-bold tracking-wider">Plano</div>
-                      <div className="text-xs font-bold text-brand-amber mt-1 truncate">{c.package}</div>
+                      <div className="text-[10px] uppercase text-text-muted font-bold tracking-wider font-sans">Plano</div>
+                      <div className="text-xs font-bold text-brand-amber mt-1 truncate max-w-[80px]" title={getPlanName(c.package)}>{getPlanName(c.package)}</div>
                     </div>
                     <div>
                       <div className="text-[10px] uppercase text-text-muted font-bold tracking-wider font-sans">Valor</div>
@@ -258,7 +278,9 @@ export default function Clients({ clients, onViewDetail, onEditClient, onDeleteC
                     </div>
                     <div>
                       <div className="text-[10px] uppercase text-text-muted font-bold tracking-wider">Vence</div>
-                      <div className="text-xs font-semibold text-text-secondary mt-1">Dia {c.due}</div>
+                      <div className="text-xs font-semibold text-text-secondary mt-1" title={getAdjustedDueDay(c.due).isAdjusted ? `Ajustado do dia original ${c.due} pois este mês é mais curto` : undefined}>
+                        Dia {getAdjustedDueDay(c.due).day}{getAdjustedDueDay(c.due).isAdjusted ? '*' : ''}
+                      </div>
                     </div>
                   </div>
 

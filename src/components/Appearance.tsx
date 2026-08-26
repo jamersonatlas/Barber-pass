@@ -13,7 +13,12 @@ import {
   Crown,
   Heart,
   Palette,
-  Eye
+  Eye,
+  CreditCard,
+  Zap,
+  CheckCircle2,
+  AlertCircle,
+  Key
 } from 'lucide-react';
 
 interface AppearanceProps {
@@ -37,8 +42,15 @@ export default function Appearance({ user, triggerToast, onPreviewBooking }: App
   const [slogan, setSlogan] = useState('');
   const [logoUrl, setLogoUrl] = useState('');
   const [bannerUrl, setBannerUrl] = useState('');
+  const [loginBgUrl, setLoginBgUrl] = useState('');
   const [instagram, setInstagram] = useState('');
   const [address, setAddress] = useState('');
+
+  // Mercado Pago States
+  const [mercadoPagoEnabled, setMercadoPagoEnabled] = useState(true);
+  const [mercadoPagoAccessToken, setMercadoPagoAccessToken] = useState('');
+  const [testingMp, setTestingMp] = useState(false);
+  const [mpTestResult, setMpTestResult] = useState<{ success: boolean; message: string; account?: any } | null>(null);
 
   // Hydrate state
   useEffect(() => {
@@ -53,8 +65,11 @@ export default function Appearance({ user, triggerToast, onPreviewBooking }: App
           setSlogan(data.slogan || '');
           setLogoUrl(data.logoUrl || data.avatarUrl || '');
           setBannerUrl(data.bannerUrl || '');
+          setLoginBgUrl(data.loginBgUrl || '');
           setInstagram(data.instagram || '');
           setAddress(data.address || '');
+          setMercadoPagoEnabled(data.mercadoPagoEnabled !== false);
+          setMercadoPagoAccessToken(data.mercadoPagoAccessToken || '');
         }
         setLoading(false);
       } catch (error) {
@@ -64,6 +79,48 @@ export default function Appearance({ user, triggerToast, onPreviewBooking }: App
     };
     fetchBarbearia();
   }, [user]);
+
+  const handleTestMercadoPago = async () => {
+    if (!mercadoPagoAccessToken.trim()) {
+      setMpTestResult({
+        success: false,
+        message: 'Por favor, insira o Access Token do Mercado Pago antes de testar.'
+      });
+      return;
+    }
+
+    setTestingMp(true);
+    setMpTestResult(null);
+
+    try {
+      const res = await fetch('/api/mercado-pago/test-token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ accessToken: mercadoPagoAccessToken.trim() })
+      });
+
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setMpTestResult({
+          success: true,
+          message: `Conectado com sucesso! Conta: ${data.account?.nickname || data.account?.firstName || 'Mercado Pago'} (${data.account?.email || 'Verificado'})`,
+          account: data.account
+        });
+      } else {
+        setMpTestResult({
+          success: false,
+          message: data.error || 'Token inválido ou recusado pelo Mercado Pago. Verifique suas credenciais de produção.'
+        });
+      }
+    } catch (err: any) {
+      setMpTestResult({
+        success: false,
+        message: `Falha ao testar conexão: ${err.message || 'Erro de rede'}`
+      });
+    } finally {
+      setTestingMp(false);
+    }
+  };
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -77,10 +134,13 @@ export default function Appearance({ user, triggerToast, onPreviewBooking }: App
         logoUrl: logoUrl.trim(),
         avatarUrl: logoUrl.trim(), // sync avatarUrl too
         bannerUrl: bannerUrl.trim(),
+        loginBgUrl: loginBgUrl.trim(),
         instagram: instagram.trim(),
-        address: address.trim()
+        address: address.trim(),
+        mercadoPagoEnabled: mercadoPagoEnabled,
+        mercadoPagoAccessToken: mercadoPagoAccessToken.trim()
       });
-      triggerToast('Aparência e perfil atualizados com sucesso!');
+      triggerToast('Aparência e configurações de pagamento salvas com sucesso!');
     } catch (error) {
       console.error('Error saving custom info:', error);
       triggerToast('Erro de conexão ao salvar informações.');
@@ -199,6 +259,16 @@ export default function Appearance({ user, triggerToast, onPreviewBooking }: App
                 aspectRatioLabel="Proporção Paisagem"
               />
 
+              {/* Login Background Upload Component */}
+              <ImageUpload
+                label="Imagem de Fundo da Tela Inicial / Login (Opcional)"
+                value={loginBgUrl}
+                onChange={(base64) => setLoginBgUrl(base64)}
+                onClear={() => setLoginBgUrl('')}
+                maxDimensions={{ width: 1200, height: 800 }}
+                aspectRatioLabel="Proporção Cheia (Grande)"
+              />
+
               {/* Contact and Social Media */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="space-y-1.5">
@@ -223,9 +293,24 @@ export default function Appearance({ user, triggerToast, onPreviewBooking }: App
                   <input
                     type="text"
                     value={phone}
-                    onChange={(e) => setPhone(e.target.value)}
+                    onChange={(e) => {
+                      const digits = e.target.value.replace(/\D/g, '').slice(0, 11);
+                      let formatted = '';
+                      if (digits.length > 0) {
+                        if (digits.length <= 2) {
+                          formatted = `(${digits}`;
+                        } else if (digits.length <= 6) {
+                          formatted = `(${digits.slice(0, 2)}) ${digits.slice(2)}`;
+                        } else if (digits.length <= 10) {
+                          formatted = `(${digits.slice(0, 2)}) ${digits.slice(2, 6)}-${digits.slice(6)}`;
+                        } else {
+                          formatted = `(${digits.slice(0, 2)}) ${digits.slice(2, 7)}-${digits.slice(7)}`;
+                        }
+                      }
+                      setPhone(formatted);
+                    }}
                     placeholder="Ex: (35) 99999-9999"
-                    className="w-full bg-bg-dark-900 border border-border-dark text-text-primary rounded-xl px-3.5 py-2.5 text-xs focus:outline-none focus:border-[#c5a880] transition-colors"
+                    className="w-full bg-bg-dark-900 border border-border-dark text-text-primary rounded-xl px-3.5 py-2.5 text-xs focus:outline-none focus:border-[#c5a880] transition-colors font-mono font-bold"
                   />
                 </div>
               </div>
@@ -243,6 +328,111 @@ export default function Appearance({ user, triggerToast, onPreviewBooking }: App
                   placeholder="Ex: Av. Principal, 123, Centro, São Paulo - SP"
                   className="w-full bg-bg-dark-900 border border-border-dark text-text-primary rounded-xl px-3.5 py-2.5 text-sm focus:outline-none focus:border-[#c5a880] transition-colors"
                 />
+              </div>
+
+              {/* Mercado Pago Pix Integration Section */}
+              <div className="bg-bg-dark-900 border border-sky-500/30 rounded-2xl p-4.5 space-y-4 relative overflow-hidden">
+                <div className="flex items-center justify-between border-b border-border-dark/60 pb-3">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-8 h-8 rounded-xl bg-sky-500/15 border border-sky-500/30 flex items-center justify-center text-sky-400">
+                      <CreditCard className="w-4.5 h-4.5" />
+                    </div>
+                    <div>
+                      <h4 className="font-bold text-white text-sm flex items-center gap-1.5">
+                        <span>Mercado Pago — Pagamento Pix</span>
+                        <span className="bg-sky-500/20 text-sky-300 text-[10px] px-2 py-0.5 rounded-full font-extrabold uppercase">
+                          Oficial
+                        </span>
+                      </h4>
+                      <p className="text-[11px] text-text-secondary">
+                        Receba pagamentos Pix na hora do agendamento com QR Code instantâneo.
+                      </p>
+                    </div>
+                  </div>
+
+                  <label className="relative inline-flex items-center cursor-pointer">
+                    <input 
+                      type="checkbox" 
+                      checked={mercadoPagoEnabled} 
+                      onChange={(e) => setMercadoPagoEnabled(e.target.checked)} 
+                      className="sr-only peer" 
+                    />
+                    <div className="w-10 h-5 bg-bg-dark-750 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-sky-500"></div>
+                  </label>
+                </div>
+
+                {mercadoPagoEnabled && (
+                  <div className="space-y-3.5 animate-fade-in pt-1">
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <label className="text-xs font-semibold text-text-secondary flex items-center gap-1.5">
+                          <Key className="w-3.5 h-3.5 text-sky-400" />
+                          <span>Access Token de Produção (Mercado Pago)</span>
+                        </label>
+                        <a 
+                          href="https://www.mercadopago.com.br/developers/panel/app" 
+                          target="_blank" 
+                          rel="noopener noreferrer"
+                          className="text-[10px] text-sky-400 hover:underline flex items-center gap-1"
+                        >
+                          <span>Obter Access Token</span>
+                          <ExternalLink className="w-3 h-3" />
+                        </a>
+                      </div>
+
+                      <div className="flex gap-2">
+                        <input
+                          type="password"
+                          value={mercadoPagoAccessToken}
+                          onChange={(e) => setMercadoPagoAccessToken(e.target.value)}
+                          placeholder="APP_USR-xxxxxxxxxxxxxxxx-xxxxxx..."
+                          className="w-full bg-bg-dark-800 border border-border-dark text-text-primary rounded-xl px-3.5 py-2.5 text-xs font-mono focus:outline-none focus:border-sky-400 transition-colors"
+                        />
+                        <button
+                          type="button"
+                          disabled={testingMp || !mercadoPagoAccessToken.trim()}
+                          onClick={handleTestMercadoPago}
+                          className="btn bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold px-4 py-2.5 rounded-xl flex items-center gap-1.5 shrink-0 disabled:opacity-40 cursor-pointer shadow transition-colors"
+                        >
+                          {testingMp ? (
+                            <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                          ) : (
+                            <Zap className="w-3.5 h-3.5" />
+                          )}
+                          <span>Testar Chave</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    {mpTestResult && (
+                      <div className={`p-3 rounded-xl text-xs flex items-start gap-2.5 ${
+                        mpTestResult.success 
+                          ? 'bg-emerald-950/40 border border-emerald-500/40 text-emerald-300' 
+                          : 'bg-red-950/40 border border-red-500/40 text-red-300'
+                      }`}>
+                        {mpTestResult.success ? (
+                          <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                        ) : (
+                          <AlertCircle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
+                        )}
+                        <span className="leading-relaxed">{mpTestResult.message}</span>
+                      </div>
+                    )}
+
+                    <div className="bg-bg-dark-800/80 border border-border-dark/60 rounded-xl p-3 text-[11px] text-text-muted space-y-1 leading-relaxed">
+                      <p className="font-semibold text-text-primary">💡 Como funciona para seu cliente:</p>
+                      <p>
+                        1. No agendamento, o cliente escolhe <strong>Pix Automático</strong>.
+                      </p>
+                      <p>
+                        2. O sistema gera o <strong>QR Code e o Copia e Cola</strong> na hora na tela.
+                      </p>
+                      <p>
+                        3. Assim que o cliente paga no banco, o sistema confirma o agendamento como <strong>Pago</strong> e notifica no WhatsApp!
+                      </p>
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div className="pt-4 border-t border-border-dark flex justify-end">
@@ -276,7 +466,16 @@ export default function Appearance({ user, triggerToast, onPreviewBooking }: App
               </div>
 
               {/* Screen Area */}
-              <div className="flex-1 bg-[#121214] rounded-[2rem] overflow-y-auto overflow-x-hidden pt-6 pb-4 px-3 space-y-4.5 scrollbar-thin flex flex-col">
+              <div 
+                className="flex-1 rounded-[2rem] overflow-y-auto overflow-x-hidden pt-6 pb-4 px-3 space-y-4.5 scrollbar-thin flex flex-col relative"
+                style={{
+                  backgroundColor: '#121214',
+                  backgroundImage: loginBgUrl ? `linear-gradient(rgba(0,0,0,0.85), rgba(0,0,0,0.85)), url(${loginBgUrl})` : 'none',
+                  backgroundSize: 'cover',
+                  backgroundPosition: 'center',
+                  backgroundRepeat: 'no-repeat'
+                }}
+              >
                 
                 {/* Simulated Header */}
                 <div className="flex items-center justify-between border-b border-zinc-800 pb-2 shrink-0">

@@ -2,17 +2,28 @@ import React, { useState } from 'react';
 import { motion } from 'motion/react';
 import { Search, CreditCard, DollarSign, AlertTriangle, Calendar, CheckCircle } from 'lucide-react';
 import { Client } from '../types';
-import { fmtDate, fmtMoney, initials, todayDate } from '../utils';
+import { fmtDate, fmtMoney, initials, todayDate, getAdjustedDueDay } from '../utils';
 
 interface PaymentsProps {
   clients: Client[];
   onToggleStatusFromPayments: (id: string, currentStatus: 'ok' | 'atrasado') => void;
   onNavigate: (page: string) => void;
+  barberProfile?: any;
 }
 
-export default function Payments({ clients, onToggleStatusFromPayments, onNavigate }: PaymentsProps) {
+export default function Payments({ clients, onToggleStatusFromPayments, onNavigate, barberProfile }: PaymentsProps) {
   const [search, setSearch] = useState('');
   const lateCount = clients.filter(c => c.status === 'atrasado').length;
+
+  const getPlanName = (pId: string) => {
+    if (barberProfile?.plans?.[pId]?.name) {
+      return barberProfile.plans[pId].name;
+    }
+    if (pId === 'Básico') return 'Plano Essencial';
+    if (pId === 'Premium') return 'Plano Cavalheiro';
+    if (pId === 'VIP') return 'Plano Executivo';
+    return pId;
+  };
 
   const filteredClients = clients.filter(c =>
     c.name.toLowerCase().includes(search.toLowerCase())
@@ -91,14 +102,14 @@ export default function Payments({ clients, onToggleStatusFromPayments, onNaviga
                         </td>
                         <td className="py-3.5 px-4">
                           <span className="bg-brand-amber-bg text-brand-amber border border-brand-amber-border text-[10px] px-2 py-0.5 rounded-full font-medium">
-                            {c.package}
+                            {getPlanName(c.package)}
                           </span>
                         </td>
                         <td className="py-3.5 px-4 text-xs font-semibold text-text-primary">
                           {fmtMoney(c.value)}
                         </td>
-                        <td className="py-3.5 px-4 text-xs text-text-secondary">
-                          Dia {c.due}
+                        <td className="py-3.5 px-4 text-xs text-text-secondary" title={getAdjustedDueDay(c.due).isAdjusted ? `Ajustado do dia original ${c.due} pois este mês é mais curto` : undefined}>
+                          Dia {getAdjustedDueDay(c.due).day}{getAdjustedDueDay(c.due).isAdjusted ? '*' : ''}
                         </td>
                         <td className="py-3.5 px-4 text-xs text-text-secondary">
                           {c.lastPaid ? fmtDate(c.lastPaid) : <span className="text-text-muted italic">—</span>}
@@ -166,11 +177,11 @@ export default function Payments({ clients, onToggleStatusFromPayments, onNaviga
                   <div className="grid grid-cols-3 gap-1 bg-bg-dark-900/60 p-3.5 rounded-xl border border-border-dark/60 text-center shrink-0 select-none">
                     <div>
                       <div className="text-[10px] uppercase text-text-muted font-bold tracking-wider">Pacote / Valor</div>
-                      <div className="text-xs font-medium text-text-primary mt-1 truncate">{c.package} · {fmtMoney(c.value)}</div>
+                      <div className="text-xs font-medium text-text-primary mt-1 truncate" title={`${getPlanName(c.package)} · ${fmtMoney(c.value)}`}>{getPlanName(c.package)} · {fmtMoney(c.value)}</div>
                     </div>
                     <div>
                       <div className="text-[10px] uppercase text-text-muted font-bold tracking-wider">Dia Cobrança</div>
-                      <div className="text-xs font-semibold text-text-secondary mt-1">Dia {c.due}</div>
+                      <div className="text-xs font-semibold text-text-secondary mt-1" title={getAdjustedDueDay(c.due).isAdjusted ? `Ajustado do dia original ${c.due} pois este mês é mais curto` : undefined}>Dia {getAdjustedDueDay(c.due).day}{getAdjustedDueDay(c.due).isAdjusted ? '*' : ''}</div>
                     </div>
                     <div>
                       <div className="text-[10px] uppercase text-text-muted font-bold tracking-wider">Último Recibo</div>

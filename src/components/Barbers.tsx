@@ -50,6 +50,15 @@ export default function Barbers({ onBack, triggerToast, openConfirmModal }: Barb
   const [bPassword, setBPassword] = useState('');
   const [bAvatarUrl, setBAvatarUrl] = useState('');
 
+  // Feature Flag settings
+  const [bFeaturePixEnabled, setBFeaturePixEnabled] = useState(true);
+  const [bFeatureAlertsEnabled, setBFeatureAlertsEnabled] = useState(true);
+  const [bFeatureEmployeesEnabled, setBFeatureEmployeesEnabled] = useState(true);
+
+  // Robust error and submission states
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+
   // Sync barbers in real-time
   useEffect(() => {
     const refBarbers = collection(db, 'barbers');
@@ -77,6 +86,11 @@ export default function Barbers({ onBack, triggerToast, openConfirmModal }: Barb
     setBUsername('');
     setBPassword('');
     setBAvatarUrl('');
+    setBFeaturePixEnabled(true);
+    setBFeatureAlertsEnabled(true);
+    setBFeatureEmployeesEnabled(true);
+    setErrorMsg(null);
+    setIsSaving(false);
     setModalOpen(true);
   };
 
@@ -88,30 +102,88 @@ export default function Barbers({ onBack, triggerToast, openConfirmModal }: Barb
     setBUsername(barber.username);
     setBPassword(barber.password);
     setBAvatarUrl(barber.avatarUrl || '');
+    setBFeaturePixEnabled(barber.featurePixEnabled !== false);
+    setBFeatureAlertsEnabled(barber.featureAlertsEnabled !== false);
+    setBFeatureEmployeesEnabled(barber.featureEmployeesEnabled !== false);
+    setErrorMsg(null);
+    setIsSaving(false);
     setModalOpen(true);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!bName.trim() || !bUsername.trim() || !bPassword.trim()) {
-      triggerToast('Preencha os campos obrigatórios (Nome, Usuário e Senha).');
+    setErrorMsg(null);
+    setIsSaving(true);
+
+    console.log('[Barbers] Iniciando processo de salvamento de barbeiro...');
+    console.log('[Barbers] Dados digitados para validação:', {
+      name: bName.trim(),
+      username: bUsername.trim(),
+      phone: bPhone.trim(),
+      email: bEmail.trim(),
+      avatarUrlLength: bAvatarUrl.length,
+      isEditing: !!editingBarber,
+      editingId: editingBarber?.id || 'nenhum'
+    });
+
+    // 1. Validando campos obrigatórios no frontend
+    if (!bName.trim()) {
+      setErrorMsg('O campo "Nome Completo" é obrigatório.');
+      setIsSaving(false);
+      console.warn('[Barbers] Validação falhou: Nome Completo vazio.');
+      return;
+    }
+    if (!bUsername.trim()) {
+      setErrorMsg('O campo "Nome de Usuário" é obrigatório.');
+      setIsSaving(false);
+      console.warn('[Barbers] Validação falhou: Usuário vazio.');
+      return;
+    }
+    if (bUsername.trim().length < 3) {
+      setErrorMsg('O nome de usuário deve conter pelo menos 3 caracteres.');
+      setIsSaving(false);
+      console.warn('[Barbers] Validação falhou: Usuário muito curto.');
+      return;
+    }
+    // Validation for valid characters to avoid breaking database rules or having unstable paths
+    const validUsernameRegex = /^[a-zA-Z0-9_\-]+$/;
+    if (!validUsernameRegex.test(bUsername.trim())) {
+      setErrorMsg('O nome de usuário só pode conter letras, números, sublinhados (_) e hifens (-). Caracteres especiais ou espaços não são permitidos.');
+      setIsSaving(false);
+      console.warn('[Barbers] Validação falhou: caracteres especiais no usuário.');
       return;
     }
 
-    // Check username duplicates (except when editing same user)
+    if (!bPassword.trim()) {
+      setErrorMsg('O campo "Senha de Acesso" é obrigatório.');
+      setIsSaving(false);
+      console.warn('[Barbers] Validação falhou: Senha vazia.');
+      return;
+    }
+    if (bPassword.trim().length < 4) {
+      setErrorMsg('A senha de acesso deve ter pelo menos 4 caracteres.');
+      setIsSaving(false);
+      console.warn('[Barbers] Validação falhou: Senha muito curta.');
+      return;
+    }
+
+    // 2. Verificar duplicados localmente
     const normalizedUser = bUsername.trim().toLowerCase();
     const isDuplicate = barbers.some(
       b => b.username.toLowerCase() === normalizedUser && (!editingBarber || b.id !== editingBarber.id)
     );
     if (isDuplicate) {
-      triggerToast('Este nome de usuário já está sendo utilizado por outro barbeiro.');
+      setErrorMsg(`O nome de usuário "${bUsername.trim()}" já está sendo utilizado por outro barbeiro.`);
+      setIsSaving(false);
+      console.warn('[Barbers] Validação falhou: Nome de usuário duplicado.');
       return;
     }
 
     try {
       if (editingBarber) {
-        // Update
+        console.log(`[Barbers] Tentando atualizar barbeiro ID: ${editingBarber.id}`);
         const bDocRef = doc(db, 'barbers', editingBarber.id);
+        
         await updateDoc(bDocRef, {
           name: bName.trim(),
           phone: bPhone.trim(),
@@ -119,13 +191,20 @@ export default function Barbers({ onBack, triggerToast, openConfirmModal }: Barb
           username: bUsername.trim().toLowerCase(),
           password: bPassword.trim(),
           avatarUrl: bAvatarUrl.trim(),
+          featurePixEnabled: bFeaturePixEnabled,
+          featureAlertsEnabled: bFeatureAlertsEnabled,
+          featureEmployeesEnabled: bFeatureEmployeesEnabled,
         });
+        
+        console.log('[Barbers] Barbeiro atualizado com sucesso no Firestore.');
         triggerToast('Perfil de barbeiro atualizado.');
       } else {
-        // Create new
+        console.log('[Barbers] Criando uma referência de novo documento para barbeiros...');
         const bColRef = collection(db, 'barbers');
         const newDocRef = doc(bColRef);
-        await setDoc(newDocRef, {
+        console.log(`[Barbers] Referência de ID gerada: ${newDocRef.id}`);
+ 
+        const payload = {
           id: newDocRef.id,
           name: bName.trim(),
           phone: bPhone.trim(),
@@ -133,14 +212,41 @@ export default function Barbers({ onBack, triggerToast, openConfirmModal }: Barb
           username: bUsername.trim().toLowerCase(),
           password: bPassword.trim(),
           avatarUrl: bAvatarUrl.trim(),
+          featurePixEnabled: bFeaturePixEnabled,
+          featureAlertsEnabled: bFeatureAlertsEnabled,
+          featureEmployeesEnabled: bFeatureEmployeesEnabled,
           createdAt: new Date().toISOString()
-        });
+        };
+
+        console.log('[Barbers] Enviando payload ao setDoc no Firestore:', payload);
+        await setDoc(newDocRef, payload);
+        
+        console.log('[Barbers] Novo barbeiro cadastrado com sucesso no Firestore.');
         triggerToast('Novo barbeiro adicionado com sucesso!');
       }
       setModalOpen(false);
     } catch (err: any) {
-      console.error('Error saving barber:', err);
-      handleFirestoreError(err, OperationType.WRITE, 'barbers');
+      console.error('[Barbers] Falha gravíssima ao salvar barbeiro no Firestore:', err);
+      
+      // Diagnosticar erro de permissão ou conexão do firestore
+      const errStr = String(err).toLowerCase();
+      if (errStr.includes('permission') || errStr.includes('insufficient')) {
+        setErrorMsg('Erro de permissão no Firestore: Você não possui autorização (regras de segurança) para gravar na coleção de barbeiros ("barbers").');
+      } else if (errStr.includes('offline') || errStr.includes('network')) {
+        setErrorMsg('Erro de Conexão: O Firestore informa que o cliente está offline ou sem internet estável.');
+      } else if (errStr.includes('quota') || errStr.includes('exceeded')) {
+        setErrorMsg('Erro de Cota Excedida: Limites de leitura/gravação diários do Firestore foram atingidos no projeto Firebase.');
+      } else {
+        setErrorMsg(`Erro de gravação no banco de dados: ${err.message || String(err)}`);
+      }
+      
+      try {
+        handleFirestoreError(err, OperationType.WRITE, 'barbers');
+      } catch (logErr) {
+        console.error('[Barbers] handleFirestoreError registrou a falha formatada para diagnóstico do sistema.');
+      }
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -367,8 +473,8 @@ export default function Barbers({ onBack, triggerToast, openConfirmModal }: Barb
       {/* Slide-in / Modal form: Add/Edit Barber */}
       {modalOpen && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-fade-in">
-          <div className="bg-bg-dark-800 border border-border-dark w-full max-w-md rounded-2xl overflow-hidden shadow-2xl relative animate-scale-up">
-            <div className="px-5 py-4 border-b border-border-dark flex justify-between items-center bg-bg-dark-850">
+          <div className="bg-bg-dark-800 border border-border-dark w-full max-w-md rounded-2xl overflow-hidden shadow-2xl relative animate-scale-up flex flex-col max-h-[90vh]">
+            <div className="px-5 py-4 border-b border-border-dark flex justify-between items-center bg-bg-dark-850 shrink-0">
               <h3 className="font-display font-medium text-lg text-text-primary">
                 {editingBarber ? 'Editar Barbeiro' : 'Adicionar Barbeiro'}
               </h3>
@@ -380,16 +486,23 @@ export default function Barbers({ onBack, triggerToast, openConfirmModal }: Barb
               </button>
             </div>
 
-            <form onSubmit={handleSubmit} className="p-5.5 space-y-4">
+            <form onSubmit={handleSubmit} className="p-5.5 space-y-4 overflow-y-auto flex-1 min-h-0">
+              {errorMsg && (
+                <div id="barber-modal-error" className="bg-red-500/15 border border-red-500/30 text-[#fca5a5] p-3.5 rounded-xl text-xs font-semibold leading-relaxed animate-fade-in text-center">
+                  ⚠️ {errorMsg}
+                </div>
+              )}
+
               <div className="space-y-1.5">
                 <label className="text-xs font-semibold text-text-secondary">Nome Completo *</label>
                 <input
                   type="text"
                   required
+                  disabled={isSaving}
                   placeholder="Nome do barbeiro"
                   value={bName}
                   onChange={(e) => setBName(e.target.value)}
-                  className="w-full bg-bg-dark-900 border border-border-dark text-text-primary rounded-xl px-3.5 py-2.5 text-sm focus:outline-none focus:border-brand-amber transition-colors"
+                  className="w-full bg-bg-dark-900 border border-border-dark text-text-primary rounded-xl px-3.5 py-2.5 text-sm focus:outline-none focus:border-brand-amber transition-colors disabled:opacity-50"
                 />
               </div>
 
@@ -399,10 +512,11 @@ export default function Barbers({ onBack, triggerToast, openConfirmModal }: Barb
                   <input
                     type="text"
                     required
+                    disabled={isSaving}
                     placeholder="Ex: marcos_barber"
                     value={bUsername}
                     onChange={(e) => setBUsername(e.target.value)}
-                    className="w-full bg-bg-dark-900 border border-border-dark text-text-primary rounded-xl px-3.5 py-2.5 text-sm focus:outline-none focus:border-brand-amber transition-colors font-mono font-bold"
+                    className="w-full bg-bg-dark-900 border border-border-dark text-text-primary rounded-xl px-3.5 py-2.5 text-sm focus:outline-none focus:border-brand-amber transition-colors font-mono font-bold disabled:opacity-50"
                   />
                 </div>
                 <div className="space-y-1.5">
@@ -410,10 +524,11 @@ export default function Barbers({ onBack, triggerToast, openConfirmModal }: Barb
                   <input
                     type="text"
                     required
+                    disabled={isSaving}
                     placeholder="Ex: 12345"
                     value={bPassword}
                     onChange={(e) => setBPassword(e.target.value)}
-                    className="w-full bg-bg-dark-900 border border-border-dark text-text-primary rounded-xl px-3.5 py-2.5 text-sm focus:outline-none focus:border-brand-amber transition-colors"
+                    className="w-full bg-bg-dark-900 border border-border-dark text-text-primary rounded-xl px-3.5 py-2.5 text-sm focus:outline-none focus:border-brand-amber transition-colors disabled:opacity-50"
                   />
                 </div>
               </div>
@@ -422,10 +537,11 @@ export default function Barbers({ onBack, triggerToast, openConfirmModal }: Barb
                 <label className="text-xs font-semibold text-text-secondary">Celular / WhatsApp (Opcional)</label>
                 <input
                   type="text"
+                  disabled={isSaving}
                   placeholder="(35) 99999-9999"
                   value={bPhone}
                   onChange={(e) => setBPhone(e.target.value)}
-                  className="w-full bg-bg-dark-900 border border-border-dark text-text-primary rounded-xl px-3.5 py-2.5 text-sm focus:outline-none focus:border-brand-amber transition-colors"
+                  className="w-full bg-bg-dark-900 border border-border-dark text-text-primary rounded-xl px-3.5 py-2.5 text-sm focus:outline-none focus:border-brand-amber transition-colors disabled:opacity-50"
                 />
               </div>
 
@@ -433,18 +549,82 @@ export default function Barbers({ onBack, triggerToast, openConfirmModal }: Barb
                 <label className="text-xs font-semibold text-text-secondary">E-mail corporativo (Opcional)</label>
                 <input
                   type="email"
+                  disabled={isSaving}
                   placeholder="barbeiro@email.com"
                   value={bEmail}
                   onChange={(e) => setBEmail(e.target.value)}
-                  className="w-full bg-bg-dark-900 border border-border-dark text-text-primary rounded-xl px-3.5 py-2.5 text-sm focus:outline-none focus:border-brand-amber transition-colors"
+                  className="w-full bg-bg-dark-900 border border-border-dark text-text-primary rounded-xl px-3.5 py-2.5 text-sm focus:outline-none focus:border-brand-amber transition-colors disabled:opacity-50"
                 />
+              </div>
+
+              <div className="bg-bg-dark-950 p-4 rounded-xl border border-border-dark space-y-3.5">
+                <span className="text-xs font-bold text-brand-amber block uppercase tracking-wider">
+                  Recursos do Plano / Assinatura
+                </span>
+                
+                {/* Pausado temporariamente conforme solicitação do usuário */}
+                {false && (
+                  <label className="flex items-start gap-3 cursor-pointer select-none group">
+                    <input
+                      type="checkbox"
+                      checked={bFeaturePixEnabled}
+                      onChange={(e) => setBFeaturePixEnabled(e.target.checked)}
+                      disabled={isSaving}
+                      className="w-4 h-4 mt-0.5 rounded border-border-dark text-brand-amber focus:ring-brand-amber bg-bg-dark-900 cursor-pointer accent-brand-amber"
+                    />
+                    <div className="flex flex-col">
+                      <span className="text-xs font-semibold text-text-primary group-hover:text-white transition-colors">
+                        Função Pix Automático (Mercado Pago)
+                      </span>
+                      <span className="text-[10px] text-text-muted">
+                        Permitir que clientes paguem direto no agendamento.
+                      </span>
+                    </div>
+                  </label>
+                )}
+
+                <label className="flex items-start gap-3 cursor-pointer select-none group">
+                  <input
+                    type="checkbox"
+                    checked={bFeatureAlertsEnabled}
+                    onChange={(e) => setBFeatureAlertsEnabled(e.target.checked)}
+                    disabled={isSaving}
+                    className="w-4 h-4 mt-0.5 rounded border-border-dark text-brand-amber focus:ring-brand-amber bg-bg-dark-900 cursor-pointer accent-brand-amber"
+                  />
+                  <div className="flex flex-col">
+                    <span className="text-xs font-semibold text-text-primary group-hover:text-white transition-colors">
+                      Avisos de Mensagem (WhatsApp / Alertas)
+                    </span>
+                    <span className="text-[10px] text-text-muted">
+                      Liberar aba de avisos de atrasados e mensagens automáticas.
+                    </span>
+                  </div>
+                </label>
+
+                <label className="flex items-start gap-3 cursor-pointer select-none group">
+                  <input
+                    type="checkbox"
+                    checked={bFeatureEmployeesEnabled}
+                    onChange={(e) => setBFeatureEmployeesEnabled(e.target.checked)}
+                    disabled={isSaving}
+                    className="w-4 h-4 mt-0.5 rounded border-border-dark text-brand-amber focus:ring-brand-amber bg-bg-dark-900 cursor-pointer accent-brand-amber"
+                  />
+                  <div className="flex flex-col">
+                    <span className="text-xs font-semibold text-text-primary group-hover:text-white transition-colors">
+                      Cadastro de Equipe / Barbeiros
+                    </span>
+                    <span className="text-[10px] text-text-muted">
+                      Permitir que a barbearia cadastre colaboradores e funcionários.
+                    </span>
+                  </div>
+                </label>
               </div>
 
               <ImageUpload
                 label="Foto de Perfil do Barbeiro (Opcional)"
                 value={bAvatarUrl}
-                onChange={(base64) => setBAvatarUrl(base64)}
-                onClear={() => setBAvatarUrl('')}
+                onChange={(base64) => !isSaving && setBAvatarUrl(base64)}
+                onClear={() => !isSaving && setBAvatarUrl('')}
                 maxDimensions={{ width: 400, height: 400 }}
                 aspectRatioLabel="Proporção 1:1"
               />
@@ -456,16 +636,25 @@ export default function Barbers({ onBack, triggerToast, openConfirmModal }: Barb
               <div className="border-t border-border-dark pt-4 flex gap-3.5 justify-end">
                 <button
                   type="button"
+                  disabled={isSaving}
                   onClick={() => setModalOpen(false)}
-                  className="btn btn-ghost text-xs font-bold border border-border-dark hover:bg-bg-dark-700 px-4 py-2.5 rounded-xl cursor-pointer text-text-secondary"
+                  className="btn btn-ghost text-xs font-bold border border-border-dark hover:bg-bg-dark-700 px-4 py-2.5 rounded-xl cursor-pointer text-text-secondary disabled:opacity-40"
                 >
                   Cancelar
                 </button>
                 <button
                   type="submit"
-                  className="btn bg-brand-amber hover:bg-brand-amber-hover text-[#1a0e00] text-xs font-bold px-5 py-2.5 rounded-xl cursor-pointer shadow"
+                  disabled={isSaving}
+                  className="btn bg-brand-amber hover:bg-brand-amber-hover text-[#1a0e00] text-xs font-bold px-5 py-2.5 rounded-xl cursor-pointer shadow flex items-center gap-2 min-w-[130px] justify-center disabled:opacity-50"
                 >
-                  {editingBarber ? 'Salvar Edição' : 'Cadastrar Barbeiro'}
+                  {isSaving ? (
+                    <>
+                      <div className="w-3.5 h-3.5 border-2 border-[#1a0e00] border-t-transparent rounded-full animate-spin"></div>
+                      <span>Salvando...</span>
+                    </>
+                  ) : (
+                    <span>{editingBarber ? 'Salvar Edição' : 'Cadastrar Barbeiro'}</span>
+                  )}
                 </button>
               </div>
             </form>

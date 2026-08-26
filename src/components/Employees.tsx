@@ -12,6 +12,7 @@ import {
 import { db, handleFirestoreError, OperationType } from '../firebase';
 import { Employee } from '../types';
 import { initials } from '../utils';
+import ImageUpload from './ImageUpload';
 import { 
   Users, 
   Plus, 
@@ -57,6 +58,10 @@ export default function Employees({ user, triggerToast, openConfirmModal }: Empl
   const [empPhone, setEmpPhone] = useState('');
   const [empAvatarUrl, setEmpAvatarUrl] = useState('');
 
+  // Robust error and submission states
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+
   // Sync employees in real-time
   useEffect(() => {
     const colRef = collection(db, 'barber_employees');
@@ -86,6 +91,8 @@ export default function Employees({ user, triggerToast, openConfirmModal }: Empl
     setEmpName('');
     setEmpPhone('');
     setEmpAvatarUrl('');
+    setErrorMsg(null);
+    setIsSaving(false);
     setModalOpen(true);
   };
 
@@ -94,42 +101,88 @@ export default function Employees({ user, triggerToast, openConfirmModal }: Empl
     setEmpName(emp.name);
     setEmpPhone(emp.phone || '');
     setEmpAvatarUrl(emp.avatarUrl || '');
+    setErrorMsg(null);
+    setIsSaving(false);
     setModalOpen(true);
   };
 
   const handleSaveEmployee = async (e: React.FormEvent) => {
     e.preventDefault();
+    setErrorMsg(null);
+    setIsSaving(true);
+
+    console.log('[Employees] Iniciando salvamento de funcionário barbearia...');
+    console.log('[Employees] Dados de entrada:', {
+      name: empName.trim(),
+      phone: empPhone.trim(),
+      avatarUrlLength: empAvatarUrl.length,
+      barbeariaId: user.uid,
+      isEditing: !!editingEmployee,
+      editingId: editingEmployee?.id || 'novo'
+    });
+
+    // 1. Validação de formulário robusta
     if (!empName.trim()) {
-      triggerToast('Por favor, informe o nome do barbeiro.');
+      setErrorMsg('O campo "Nome do Barbeiro" é obrigatório.');
+      setIsSaving(false);
+      console.warn('[Employees] Validação falhou: Nome vazio.');
+      return;
+    }
+    if (empName.trim().length < 2) {
+      setErrorMsg('O nome do barbeiro deve conter pelo menos 2 caracteres.');
+      setIsSaving(false);
+      console.warn('[Employees] Validação falhou: Nome muito curto.');
       return;
     }
 
     try {
       if (editingEmployee) {
-        // Edit 
+        console.log(`[Employees] Atualizando barbeiro existente ID: ${editingEmployee.id}`);
         const docRef = doc(db, 'barber_employees', editingEmployee.id);
         await updateDoc(docRef, {
           name: empName.trim(),
           phone: empPhone.trim(),
           avatarUrl: empAvatarUrl.trim(),
         });
+        console.log('[Employees] Funcionário atualizado com sucesso no Firestore.');
         triggerToast('Barbeiro atualizado!');
       } else {
-        // Add
+        console.log('[Employees] Adicionando novo funcionário no Firestore...');
         const colRef = collection(db, 'barber_employees');
-        await addDoc(colRef, {
+        const payload = {
           barbeariaId: user.uid,
           name: empName.trim(),
           phone: empPhone.trim(),
           avatarUrl: empAvatarUrl.trim(),
           createdAt: new Date().toISOString()
-        });
+        };
+        console.log('[Employees] Payload enviado:', payload);
+        await addDoc(colRef, payload);
+        console.log('[Employees] Novo funcionário adicionado com sucesso no Firestore.');
         triggerToast('Novo barbeiro contratado com sucesso!');
       }
       setModalOpen(false);
-    } catch (error) {
-      console.error('Error saving employee:', error);
-      triggerToast('Erro ao salvar os dados.');
+    } catch (error: any) {
+      console.error('[Employees] Falha gravíssima ao salvar colaborador:', error);
+      
+      const errStr = String(error).toLowerCase();
+      if (errStr.includes('permission') || errStr.includes('insufficient')) {
+        setErrorMsg('Erro de permissão no Firestore: Você não possui autorização (regras de segurança) para gravar na coleção "barber_employees".');
+      } else if (errStr.includes('offline') || errStr.includes('network')) {
+        setErrorMsg('Erro de Conexão: O Firestore informa que o cliente está offline ou sem internet.');
+      } else if (errStr.includes('quota') || errStr.includes('exceeded')) {
+        setErrorMsg('Erro de Cota Excedida: Os limites de leitura/gravação diários do Firestore foram esgotados.');
+      } else {
+        setErrorMsg(`Erro de gravação: ${error.message || String(error)}`);
+      }
+
+      try {
+        handleFirestoreError(error, OperationType.WRITE, 'barber_employees');
+      } catch (logErr) {
+        console.error('[Employees] handleFirestoreError registrou a falha formatada para diagnóstico.');
+      }
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -272,12 +325,12 @@ export default function Employees({ user, triggerToast, openConfirmModal }: Empl
       {modalOpen && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-[2px] flex items-center justify-center p-4 z-50 animate-fade-in">
           <div 
-            className="bg-bg-dark-800 border border-border-dark w-full max-w-md rounded-2xl p-6 shadow-2xl relative overflow-hidden"
+            className="bg-bg-dark-800 border border-border-dark w-full max-w-md rounded-2xl p-6 shadow-2xl relative overflow-hidden flex flex-col max-h-[90vh]"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="absolute top-0 inset-x-0 h-1 bg-[#c5a880]"></div>
+            <div className="absolute top-0 inset-x-0 h-1 bg-[#c5a880] shrink-0"></div>
             
-            <div className="flex items-center justify-between pb-4 border-b border-border-dark select-none">
+            <div className="flex items-center justify-between pb-4 border-b border-border-dark select-none shrink-0">
               <h3 className="font-display font-bold text-lg text-white">
                 {editingEmployee ? 'Editar Perfil de Barbeiro' : 'Adicionar Novo Barbeiro'}
               </h3>
@@ -289,7 +342,13 @@ export default function Employees({ user, triggerToast, openConfirmModal }: Empl
               </button>
             </div>
 
-            <form onSubmit={handleSaveEmployee} className="space-y-4.5 pt-4">
+            <form onSubmit={handleSaveEmployee} className="space-y-4.5 pt-4 overflow-y-auto flex-1 min-h-0 pr-1">
+              {errorMsg && (
+                <div id="employee-modal-error" className="bg-red-500/15 border border-red-500/30 text-[#fca5a5] p-3 rounded-xl text-xs font-semibold leading-relaxed animate-fade-in text-center">
+                  ⚠️ {errorMsg}
+                </div>
+              )}
+
               <div className="space-y-1.5">
                 <label className="text-xs font-semibold text-text-secondary flex items-center gap-1">
                   <UserIcon className="w-3.5 h-3.5 text-brand-amber" />
@@ -298,10 +357,11 @@ export default function Employees({ user, triggerToast, openConfirmModal }: Empl
                 <input
                   type="text"
                   required
+                  disabled={isSaving}
                   placeholder="Ex: Tom, Marcos, etc."
                   value={empName}
                   onChange={(e) => setEmpName(e.target.value)}
-                  className="w-full bg-bg-dark-900 border border-border-dark text-text-primary rounded-xl px-3.5 py-2.5 text-sm focus:outline-none focus:border-[#c5a880] transition-colors"
+                  className="w-full bg-bg-dark-900 border border-border-dark text-text-primary rounded-xl px-3.5 py-2.5 text-sm focus:outline-none focus:border-[#c5a880] transition-colors disabled:opacity-50"
                 />
               </div>
 
@@ -311,46 +371,67 @@ export default function Employees({ user, triggerToast, openConfirmModal }: Empl
                   <span>WhatsApp / Celular (Opcional)</span>
                 </label>
                 <input
-                  type="tel"
+                  type="text"
+                  disabled={isSaving}
                   placeholder="Ex: (35) 99999-9999"
                   value={empPhone}
-                  onChange={(e) => setEmpPhone(e.target.value)}
-                  className="w-full bg-bg-dark-900 border border-border-dark text-text-primary rounded-xl px-3.5 py-2.5 text-xs font-mono font-bold focus:outline-none focus:border-[#c5a880] transition-colors"
+                  onChange={(e) => {
+                    const digits = e.target.value.replace(/\D/g, '').slice(0, 11);
+                    let formatted = '';
+                    if (digits.length > 0) {
+                      if (digits.length <= 2) {
+                        formatted = `(${digits}`;
+                      } else if (digits.length <= 6) {
+                        formatted = `(${digits.slice(0, 2)}) ${digits.slice(2)}`;
+                      } else if (digits.length <= 10) {
+                        formatted = `(${digits.slice(0, 2)}) ${digits.slice(2, 6)}-${digits.slice(6)}`;
+                      } else {
+                        formatted = `(${digits.slice(0, 2)}) ${digits.slice(2, 7)}-${digits.slice(7)}`;
+                      }
+                    }
+                    setEmpPhone(formatted);
+                  }}
+                  className="w-full bg-bg-dark-900 border border-border-dark text-text-primary rounded-xl px-3.5 py-2.5 text-xs font-mono font-bold focus:outline-none focus:border-[#c5a880] transition-colors disabled:opacity-50"
                 />
               </div>
 
               <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-text-secondary flex items-center gap-1">
-                  <ImageIcon className="w-3.5 h-3.5 text-brand-amber" />
-                  <span>URL da Foto de Perfil (Opcional)</span>
-                </label>
-                <input
-                  type="url"
-                  placeholder="Ex: https://images.unsplash.com/photo-..."
+                <ImageUpload
+                  label="Foto do Perfil (Foto do Barbeiro) - Opcional"
                   value={empAvatarUrl}
-                  onChange={(e) => setEmpAvatarUrl(e.target.value)}
-                  className="w-full bg-bg-dark-900 border border-border-dark text-text-primary rounded-xl px-3.5 py-2.5 text-xs focus:outline-none focus:border-[#c5a880] transition-colors"
+                  onChange={(base64) => setEmpAvatarUrl(base64)}
+                  onClear={() => setEmpAvatarUrl('')}
+                  maxDimensions={{ width: 300, height: 300 }}
+                  aspectRatioLabel="Proporção 1:1"
                 />
               </div>
 
-              <p className="text-[10px] text-text-muted italic leading-normal pb-1 leading-normal pl-1 select-none">
+              <p className="text-[10px] text-text-muted italic leading-normal pb-1 pl-1 select-none">
                 * Os barbeiros cadastrados aqui aparecerão na agenda simplificada do seu link profissional de agendamentos para clientes realizarem agendamentos avulsos de horário.
               </p>
 
               <div className="pt-3 border-t border-border-dark flex gap-3">
                 <button
                   type="button"
+                  disabled={isSaving}
                   onClick={() => setModalOpen(false)}
-                  className="flex-1 btn border border-border-dark font-bold text-xs py-3 rounded-xl hover:bg-bg-dark-750 text-text-secondary transition-colors cursor-pointer"
+                  className="flex-1 btn border border-border-dark font-bold text-xs py-3 rounded-xl hover:bg-bg-dark-750 text-text-secondary transition-colors cursor-pointer disabled:opacity-40"
                 >
                   Cancelar
                 </button>
                 <button
                   type="submit"
-                  disabled={!empName.trim()}
-                  className="flex-[2] btn bg-[#c5a880] hover:bg-[#c5a880]/90 text-black font-bold text-xs py-3 rounded-xl cursor-pointer disabled:opacity-40 shadow transition-colors"
+                  disabled={isSaving || !empName.trim()}
+                  className="flex-[2] btn bg-[#c5a880] hover:bg-[#c5a880]/90 text-black font-bold text-xs py-3 rounded-xl cursor-pointer disabled:opacity-40 shadow transition-colors flex items-center justify-center gap-2 min-w-[140px]"
                 >
-                  {editingEmployee ? 'Salvar Edições' : 'Contratar e Cadastrar'}
+                  {isSaving ? (
+                    <>
+                      <div className="w-3.5 h-3.5 border-2 border-black border-t-transparent rounded-full animate-spin"></div>
+                      <span>Salvando...</span>
+                    </>
+                  ) : (
+                    <span>{editingEmployee ? 'Salvar Edições' : 'Contratar e Cadastrar'}</span>
+                  )}
                 </button>
               </div>
             </form>

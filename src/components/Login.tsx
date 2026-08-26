@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { signInWithPopup, signInAnonymously, signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail } from 'firebase/auth';
-import { collection, query, where, getDocs, doc, updateDoc, setDoc, deleteDoc } from 'firebase/firestore';
+import { collection, query, where, getDoc, getDocs, doc, updateDoc, setDoc, deleteDoc, limit } from 'firebase/firestore';
 import { auth, db, googleProvider } from '../firebase';
 import { recreateAndSeedDatabase } from '../utils';
 import { 
@@ -44,6 +44,8 @@ export default function Login({ onLoginSuccess, onLoginStart }: LoginProps) {
   const [showPassword, setShowPassword] = useState(false);
   const [showRegInfoModal, setShowRegInfoModal] = useState(false);
   const [resetSent, setResetSent] = useState(false);
+
+  const [loginBg, setLoginBg] = useState<string>('https://images.unsplash.com/photo-1585747860715-2ba37e788b70?q=80&w=1200&auto=format&fit=crop');
 
   const [resettingDb, setResettingDb] = useState(false);
   const [dbResetSuccess, setDbResetSuccess] = useState(false);
@@ -99,10 +101,7 @@ export default function Login({ onLoginSuccess, onLoginStart }: LoginProps) {
     }
   };
 
-  const isTestPanelVisible = typeof window !== 'undefined' && (
-    window.self !== window.top || 
-    new URLSearchParams(window.location.search).get('test') === 'true'
-  );
+  const isTestPanelVisible = false;
 
   const handleAdminPasswordReset = async () => {
     setError(null);
@@ -323,66 +322,21 @@ export default function Login({ onLoginSuccess, onLoginStart }: LoginProps) {
       <div 
         className="absolute inset-0 bg-cover bg-center z-0 transition-opacity duration-1000" 
         style={{ 
-          backgroundImage: `url('https://images.unsplash.com/photo-1585747860715-2ba37e788b70?q=80&w=1200&auto=format&fit=crop')` 
+          backgroundImage: `url('${loginBg}')` 
         }}
       >
         {/* Semi-transparent dark overlay to protect text contrast while maintaining background clarity */}
         <div className="absolute inset-0 bg-black/75 md:bg-black/65"></div>
       </div>
 
-      {/* Dynamic Iframe detection banner for stable Google sign-in */}
-      {window.self !== window.top && (
-        <a
-          href={window.location.href}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="relative z-20 w-full max-w-sm bg-gradient-to-r from-amber-950/40 via-amber-900/60 to-amber-950/40 border border-amber-500/30 text-amber-100 hover:text-white hover:border-[#c5a880] text-[11px] py-3 px-4 rounded-xl flex items-center justify-center gap-2 text-center transition-all cursor-pointer font-bold shrink-0 shadow-[0_4px_15px_rgba(245,158,11,0.25)] hover:scale-[1.01] hover:shadow-[0_4px_20px_rgba(224,142,8,0.35)]"
-        >
-          <span className="animate-bounce">🌐</span> Abrir em Nova Aba (Para Login do Google Funcionar perfeitamente)
-        </a>
-      )}
 
-      {/* 1. Header with Fictional Premium Logo Badge */}
-      <div className="relative z-10 w-full max-w-sm flex flex-col items-center mt-3 text-center">
-        
-        {/* Beautiful Fictional Crest Badge with Overlapping Scissors & Crown */}
-        <div className="relative mb-2 select-none flex flex-col items-center group">
-          <div className="absolute inset-0 rounded-full bg-[#c5a880]/15 blur-xl scale-93 group-hover:scale-105 transition-transform duration-500"></div>
-          <svg className="w-20 h-20 text-[#c5a880] filter drop-shadow-[0_4px_10px_rgba(197,168,128,0.4)] relative z-10 transition-transform duration-300 hover:rotate-2" viewBox="0 0 100 100" fill="none" stroke="currentColor">
-            {/* Elegant outer golden circle ornament */}
-            <circle cx="50" cy="50" r="44" stroke="currentColor" strokeWidth="1" strokeDasharray="4 3" />
-            <circle cx="50" cy="50" r="40" stroke="currentColor" strokeWidth="1.2" />
-            
-            {/* Crown silhouette shape inside */}
-            <path d="M36 39 L42 47 L50 35 L58 47 L64 39 L60 54 L40 54 Z" fill="currentColor" fillOpacity="0.75" />
-            
-            {/* Vintage shear handles bottom design */}
-            <path d="M43 65 C41 63 41 59 44 57 L50 51 L56 57 C59 59 59 63 57 65 C55 67 51 67 50 64 C49 67 45 67 43 65 Z" fill="currentColor" />
-            
-            {/* Crossing scissor blades */}
-            <line x1="37" y1="37" x2="63" y2="63" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-            <line x1="63" y1="37" x2="37" y2="63" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-            
-            {/* Small elegance stars */}
-            <circle cx="28" cy="50" r="1.5" fill="currentColor" />
-            <circle cx="72" cy="50" r="1.5" fill="currentColor" />
-          </svg>
-        </div>
 
-        {/* Dynamic Fictional Branding */}
-        <h1 className="font-display font-black text-3.2xl tracking-[0.16em] text-[#f5ebd8] uppercase leading-none drop-shadow-md select-none mt-1">
-          ROYAL CUTS
+      {/* 1. Header with simple styled name */}
+      <div className="relative z-10 w-full max-w-sm flex flex-col items-center mt-3 text-center mb-5">
+        <h1 className="font-display font-black text-3xl tracking-[0.14em] text-[#f5ebd8] uppercase leading-none drop-shadow-md select-none">
+          sistema de barbeiros
         </h1>
-        <p className="text-[#c5a880] font-bold text-[9px] tracking-[0.28em] uppercase mt-1 drop-shadow-sm select-none">
-          HAIR & BEARD CLUB
-        </p>
-
-        {/* Symmetric Divider with Scissors symbol */}
-        <div className="flex items-center justify-center gap-4 my-2.5 w-40 opacity-70 select-none">
-          <div className="h-[1px] bg-gradient-to-r from-transparent to-[#c5a880]/40 flex-1"></div>
-          <Scissors className="w-3 h-3 text-[#c5a880] shrink-0" />
-          <div className="h-[1px] bg-gradient-to-l from-transparent to-[#c5a880]/40 flex-1"></div>
-        </div>
+        <div className="h-[2px] w-14 bg-gradient-to-r from-transparent via-[#c5a880] to-transparent mt-3.5 opacity-80 select-none"></div>
       </div>
 
       {/* 2. Glassmorphism Screen Container Box */}

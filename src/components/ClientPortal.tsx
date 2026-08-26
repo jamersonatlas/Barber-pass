@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { 
   collection, 
-  onSnapshot 
+  onSnapshot,
+  doc
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { Client, Cut } from '../types';
-import { initials, fmtDate, fmtMoney } from '../utils';
+import { initials, fmtDate, fmtMoney, getAdjustedDueDay } from '../utils';
 import { 
   Scissors, 
   CheckCircle, 
@@ -27,6 +28,18 @@ export default function ClientPortal({ clientId, onLogout }: ClientPortalProps) 
   const [cuts, setCuts] = useState<Cut[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [barber, setBarber] = useState<any>(null);
+  const [clientBookings, setClientBookings] = useState<any[]>([]);
+
+  const WEEKDAY_NAMES = [
+    'Domingo',
+    'Segunda-feira',
+    'Terça-feira',
+    'Quarta-feira',
+    'Quinta-feira',
+    'Sexta-feira',
+    'Sábado'
+  ];
 
   // Sync client details in real-time
   useEffect(() => {
@@ -75,6 +88,71 @@ export default function ClientPortal({ clientId, onLogout }: ClientPortalProps) 
     return () => unsubscribe();
   }, [clientId]);
 
+  // Sync client's barber profile for recurring slots
+  useEffect(() => {
+    if (!client || !client.ownerId) return;
+
+    const refBarber = doc(db, 'barbers', client.ownerId);
+    const unsubscribe = onSnapshot(refBarber, (docSnap) => {
+      if (docSnap.exists()) {
+        setBarber({ id: docSnap.id, ...docSnap.data() });
+      }
+    }, (err) => {
+      console.error('Failed to sync barber details for client portal:', err);
+    });
+
+    return () => unsubscribe();
+  }, [client?.ownerId]);
+
+  // Sync client's guest bookings
+  useEffect(() => {
+    if (!client || !client.phone) return;
+
+    const refBookings = collection(db, 'guest_bookings');
+    const unsubscribe = onSnapshot(refBookings, (snapshot) => {
+      const list: any[] = [];
+      const cleanClientPhone = client.phone ? client.phone.replace(/\D/g, '') : '';
+      
+      snapshot.forEach(docSnap => {
+        const data = docSnap.data();
+        const bookingPhone = data.clientPhone ? data.clientPhone.replace(/\D/g, '') : '';
+        
+        // Match by clean phone number or exact name
+        if (
+          (cleanClientPhone && bookingPhone && bookingPhone === cleanClientPhone) ||
+          (data.clientName && data.clientName.toLowerCase().trim() === client.name.toLowerCase().trim())
+        ) {
+          list.push({ id: docSnap.id, ...data });
+        }
+      });
+
+      // Sort bookings by date and time ascending
+      list.sort((a, b) => {
+        const dateCompare = a.date.localeCompare(b.date);
+        if (dateCompare !== 0) return dateCompare;
+        return a.time.localeCompare(b.time);
+      });
+
+      setClientBookings(list);
+    }, (err) => {
+      console.error('Failed to sync client bookings:', err);
+    });
+
+    return () => unsubscribe();
+  }, [client?.phone, client?.name]);
+
+  const clientRecurringSlots = React.useMemo(() => {
+    if (!barber || !barber.scheduleSettings || !barber.scheduleSettings.recurringSlots) {
+      return [];
+    }
+    return barber.scheduleSettings.recurringSlots.filter((slot: any) => slot.clientId === client.id);
+  }, [barber, client?.id]);
+
+  const upcomingBookings = React.useMemo(() => {
+    const todayStr = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+    return clientBookings.filter((b: any) => b.date >= todayStr);
+  }, [clientBookings]);
+
   if (loading) {
     return (
       <div className="min-h-screen bg-bg-dark-900 flex flex-col items-center justify-center p-6">
@@ -107,7 +185,7 @@ export default function ClientPortal({ clientId, onLogout }: ClientPortalProps) 
   const isLate = client.status === 'atrasado';
 
   return (
-    <div className="h-screen w-full overflow-hidden bg-bg-dark-900 text-text-primary flex flex-col font-sans select-none animate-fade-in">
+    <div className="h-[100dvh] w-full overflow-hidden bg-bg-dark-900 text-text-primary flex flex-col font-sans select-none animate-fade-in">
       {/* Top Header Navigation */}
       <header className="px-4 md:px-8 py-4 border-b border-border-dark bg-bg-dark-800 flex items-center justify-between shadow shrink-0">
         <div className="flex items-center gap-3">
@@ -134,7 +212,7 @@ export default function ClientPortal({ clientId, onLogout }: ClientPortalProps) 
       </header>
 
       {/* Main Container Area */}
-      <main className="flex-1 overflow-y-auto max-w-4xl w-full mx-auto p-4 md:p-8 space-y-6 touch-pan-y">
+      <main className="flex-1 overflow-y-auto max-w-4xl w-full mx-auto p-4 pb-36 md:p-8 md:pb-12 space-y-6 touch-pan-y">
         
         {/* Status Warning Banner */}
         {isLate && (
@@ -171,8 +249,8 @@ export default function ClientPortal({ clientId, onLogout }: ClientPortalProps) 
                 </div>
                 <div>
                   <div className="text-[10px] text-text-muted uppercase tracking-wider font-bold">Cobrança e Vencimento</div>
-                  <div className="text-sm font-semibold text-text-primary mt-0.5 flex items-center gap-1.5">
-                    <Calendar className="w-4 h-4 text-text-muted" /> Todo dia {client.due}
+                  <div className="text-sm font-semibold text-text-primary mt-0.5 flex items-center gap-1.5" title={getAdjustedDueDay(client.due).isAdjusted ? `Ajustado do dia original ${client.due} pois este mês é mais curto` : undefined}>
+                    <Calendar className="w-4 h-4 text-text-muted" /> Todo dia {getAdjustedDueDay(client.due).day}{getAdjustedDueDay(client.due).isAdjusted ? '*' : ''}
                   </div>
                 </div>
                 <div>
@@ -229,6 +307,106 @@ export default function ClientPortal({ clientId, onLogout }: ClientPortalProps) 
                 </div>
               </div>
             )}
+          </div>
+        </div>
+
+        {/* Seus Horários e Agendamentos */}
+        <div className="bg-bg-dark-800 border border-border-dark rounded-xl p-5 md:p-6 shadow-md space-y-6">
+          <h3 className="text-xs md:text-sm font-bold uppercase text-text-muted tracking-wider mb-2 flex items-center gap-2">
+            <Calendar className="w-4.5 h-4.5 text-brand-amber" /> Seus Horários e Agendamentos
+          </h3>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {/* Column 1: Horários Fixos (Sua Assinatura) */}
+            <div className="space-y-4">
+              <div className="flex items-center gap-2 pb-2 border-b border-border-dark/60">
+                <span className="w-2 h-2 rounded-full bg-brand-amber animate-pulse"></span>
+                <h4 className="text-xs font-bold text-text-primary uppercase tracking-wider">
+                  Horários Fixos Reservados (Assinatura)
+                </h4>
+              </div>
+              
+              {clientRecurringSlots.length === 0 ? (
+                <div className="p-5 text-center text-text-muted text-xs bg-bg-dark-900/40 border border-dashed border-border-dark rounded-xl py-6">
+                  Nenhum horário fixo recorrente cadastrado para sua assinatura. Combine com seu barbeiro!
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {clientRecurringSlots.map((slot: any) => {
+                    const dayName = WEEKDAY_NAMES[slot.dayOfWeek] || `Dia ${slot.dayOfWeek}`;
+                    const isExpired = slot.expiryDate ? (new Date().toISOString().split('T')[0] > slot.expiryDate) : false;
+                    const freqLabel = slot.frequency === 'biweekly' ? 'Quinzenal (De 2 em 2 semanas)' : 'Semanal (Toda semana)';
+                    
+                    return (
+                      <div key={slot.id} className="bg-bg-dark-750 border border-border-dark rounded-xl p-3.5 flex items-center justify-between gap-3 shadow-sm hover:border-brand-amber/30 transition-all">
+                        <div className="space-y-1 min-w-0">
+                          <div className="text-xs font-bold text-text-primary">
+                            {dayName}
+                          </div>
+                          <div className="text-[10px] text-text-muted flex items-center gap-1.5 font-medium">
+                            <span>{freqLabel}</span>
+                            {slot.expiryDate && (
+                              <>
+                                <span className="w-1 h-1 bg-text-muted rounded-full"></span>
+                                <span className={isExpired ? "text-brand-danger-text" : ""}>
+                                  Validade: {slot.expiryDate.split('-').reverse().join('/')}
+                                </span>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                        <div className="text-brand-amber font-extrabold text-sm px-3 py-1 bg-brand-amber/10 border border-brand-amber/20 rounded-lg shrink-0">
+                          {slot.time}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* Column 2: Próximos Agendamentos */}
+            <div className="space-y-4">
+              <div className="flex items-center gap-2 pb-2 border-b border-border-dark/60">
+                <span className="w-2 h-2 rounded-full bg-brand-success"></span>
+                <h4 className="text-xs font-bold text-text-primary uppercase tracking-wider">
+                  Próximos Agendamentos Avulsos / Confirmados
+                </h4>
+              </div>
+
+              {upcomingBookings.length === 0 ? (
+                <div className="p-5 text-center text-text-muted text-xs bg-bg-dark-900/40 border border-dashed border-border-dark rounded-xl py-6">
+                  Nenhum agendamento individual futuro encontrado.
+                </div>
+              ) : (
+                <div className="space-y-3 max-h-[250px] overflow-y-auto pr-1">
+                  {upcomingBookings.map((booking: any) => {
+                    const dateFormatted = booking.date.split('-').reverse().join('/');
+                    const isPaid = booking.paymentStatus === 'paid';
+                    
+                    return (
+                      <div key={booking.id} className="bg-bg-dark-750 border border-border-dark rounded-xl p-3.5 flex items-center justify-between gap-3 shadow-sm hover:border-brand-success/30 transition-all">
+                        <div className="space-y-1 min-w-0">
+                          <div className="text-xs font-bold text-text-primary truncate">
+                            {booking.serviceName}
+                          </div>
+                          <div className="text-[10px] text-text-muted flex items-center gap-1.5 font-semibold">
+                            <span>{dateFormatted}</span>
+                            <span className="w-1 h-1 bg-text-muted rounded-full"></span>
+                            <span className={isPaid ? "text-brand-success-text" : "text-brand-amber"}>
+                              {isPaid ? "Pago (Pix)" : "No estabelecimento"}
+                            </span>
+                          </div>
+                        </div>
+                        <div className="text-brand-success-text font-extrabold text-sm px-3 py-1 bg-brand-success-bg/20 border border-brand-success-border/30 rounded-lg shrink-0">
+                          {booking.time}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
           </div>
         </div>
 

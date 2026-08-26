@@ -31,7 +31,7 @@ const INITIAL_CLIENTS = [
   { name: 'Pedro Oliveira', phone: '(35) 94444-6666', email: '', package: 'Premium', value: 120, due: 8, status: 'atrasado', obs: '', lastPaid: '2026-04-08', username: 'pedro', password: '123456', cuts: [] }
 ];
 
-export function getDefaultChecklist(pkg: 'Básico' | 'Premium' | 'VIP'): { id: string; serviceName: string; done: boolean; dateDone?: string; cutId?: string }[] {
+export function getDefaultChecklist(pkg: string): { id: string; serviceName: string; done: boolean; dateDone?: string; cutId?: string }[] {
   if (pkg === 'Básico') {
     return [
       { id: 'item_1', serviceName: 'Corte simples', done: false },
@@ -44,13 +44,17 @@ export function getDefaultChecklist(pkg: 'Básico' | 'Premium' | 'VIP'): { id: s
       { id: 'item_3', serviceName: 'Corte + Barba', done: false },
       { id: 'item_4', serviceName: 'Barba', done: false },
     ];
-  } else {
+  } else if (pkg === 'VIP') {
     return [
       { id: 'item_1', serviceName: 'Pacote VIP', done: false },
       { id: 'item_2', serviceName: 'Pacote VIP', done: false },
       { id: 'item_3', serviceName: 'Pacote VIP', done: false },
       { id: 'item_4', serviceName: 'Barba', done: false },
       { id: 'item_5', serviceName: 'Sobrancelha', done: false },
+    ];
+  } else {
+    return [
+      { id: 'item_1', serviceName: 'Corte simples', done: false }
     ];
   }
 }
@@ -251,7 +255,11 @@ export function fmtDate(d: string | undefined): string {
 }
 
 export function todayDate(): string {
-  return new Date().toISOString().split('T')[0];
+  const d = new Date();
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
 }
 
 export function fmtMoney(v: number): string {
@@ -262,8 +270,91 @@ export function fmtMoney(v: number): string {
 export function getWhatsAppLink(phone: string, name: string, value: number): string {
   const num = phone.replace(/\D/g, '');
   const firstName = name.trim().split(/\s+/)[0];
+  const valStr = (Number(value) || 0).toFixed(2).replace('.', ',');
   const msg = encodeURIComponent(
-    `Olá ${firstName}! Passando para avisar que sua mensalidade de R$ ${value},00 está em atraso. Qualquer dúvida estou à disposição. Obrigado! ✂`
+    `Olá, ${firstName}! Tudo bem?\n\nPassando apenas para lembrar da mensalidade deste mês, no valor de R$ ${valStr}.\n\nEssa mensagem é somente um lembrete. Quando for possível, fique à vontade para realizar o pagamento.\n\nQualquer dúvida, estou à disposição. Obrigado! ✂️`
   );
   return `https://wa.me/55${num}?text=${msg}`;
 }
+
+export function consolidateServicesList(servicesList: string[]): string[] {
+  if (!servicesList || !Array.isArray(servicesList)) return [];
+
+  const serviceGroups: { name: string; qty: number; originalName: string }[] = [];
+  const extras: string[] = [];
+
+  servicesList.forEach(benefit => {
+    // Matches patterns like "1x corte", "2x Corte Simples", etc.
+    const match = benefit.match(/^(\d+)\s*[xX]\s*(.+)$/);
+    if (match) {
+      const qty = parseInt(match[1], 10);
+      const name = match[2].trim();
+      const lowerName = name.toLowerCase();
+
+      // Find if we already have this service group
+      const existing = serviceGroups.find(g => g.name.toLowerCase() === lowerName);
+      if (existing) {
+        existing.qty += qty;
+      } else {
+        serviceGroups.push({ name, qty, originalName: name });
+      }
+    } else {
+      extras.push(benefit);
+    }
+  });
+
+  const compiled: string[] = [];
+  serviceGroups.forEach(group => {
+    const qty = group.qty;
+    const name = group.originalName;
+    const lower = name.toLowerCase();
+
+    let formatted = '';
+    if (qty > 1) {
+      if (lower === 'corte') {
+        formatted = `${qty} cortes`;
+      } else if (lower === 'barba') {
+        formatted = `${qty} barbas`;
+      } else if (lower.startsWith('corte') || lower.includes(' corte')) {
+        const pluralized = name.replace(/([cC])orte\b/g, '$1ortes');
+        formatted = `${qty} ${pluralized}`;
+      } else if (lower.startsWith('barba') || lower.includes(' barba')) {
+        const pluralized = name.replace(/([bB])arba\b/g, '$1arbas');
+        formatted = `${qty} ${pluralized}`;
+      } else {
+        formatted = `${qty}x ${name}`;
+      }
+    } else {
+      formatted = `1x ${name}`;
+    }
+    compiled.push(formatted);
+  });
+
+  return [...compiled, ...extras];
+}
+
+/**
+ * Calculates the exact due day for a given day in the current month,
+ * automatically handling leap years and months with 28, 30, or 31 days.
+ * If the preferred due day is e.g. 31, but the current month only has 30 days,
+ * it returns the 30th. For February, it returns 28 or 29.
+ */
+export function getAdjustedDueDay(dueDay: number): { day: number; isAdjusted: boolean } {
+  if (!dueDay || dueDay < 1) return { day: 1, isAdjusted: false };
+  if (dueDay > 31) return { day: 31, isAdjusted: false };
+  
+  const today = new Date();
+  const year = today.getFullYear();
+  const month = today.getMonth(); // 0 = Jan, 1 = Feb, etc.
+  
+  // Get the last day of the current month
+  const lastDayOfCurrentMonth = new Date(year, month + 1, 0).getDate();
+  
+  if (dueDay > lastDayOfCurrentMonth) {
+    return { day: lastDayOfCurrentMonth, isAdjusted: true };
+  }
+  
+  return { day: dueDay, isAdjusted: false };
+}
+
+

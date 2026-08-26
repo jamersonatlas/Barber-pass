@@ -45,6 +45,11 @@ export default function AdminDashboard({ triggerToast }: AdminDashboardProps) {
   const [lPlan, setLPlan] = useState<'mensal' | 'semestral' | 'anual'>('mensal');
   const [lNotes, setLNotes] = useState('');
 
+  // Feature Flag settings
+  const [fPix, setFPix] = useState(true);
+  const [fAlerts, setFAlerts] = useState(true);
+  const [fEmployees, setFEmployees] = useState(true);
+
   // Sync barbers raw list in real-time
   useEffect(() => {
     const refBarbers = collection(db, 'barbers');
@@ -115,6 +120,9 @@ export default function AdminDashboard({ triggerToast }: AdminDashboardProps) {
     setLDuration(barber.contractDurationMonths !== undefined ? barber.contractDurationMonths : 12);
     setLPlan(barber.planType || 'mensal');
     setLNotes(barber.notes || '');
+    setFPix(barber.featurePixEnabled !== false);
+    setFAlerts(barber.featureAlertsEnabled !== false);
+    setFEmployees(barber.featureEmployeesEnabled !== false);
     setEditModalOpen(true);
   };
 
@@ -130,7 +138,10 @@ export default function AdminDashboard({ triggerToast }: AdminDashboardProps) {
         licenseDueDay: Number(lDueDay),
         contractDurationMonths: Number(lDuration),
         planType: lPlan,
-        notes: lNotes.trim()
+        notes: lNotes.trim(),
+        featurePixEnabled: fPix,
+        featureAlertsEnabled: fAlerts,
+        featureEmployeesEnabled: fEmployees
       });
       triggerToast('Informações de licença atualizadas com sucesso.');
       setEditModalOpen(false);
@@ -409,8 +420,8 @@ export default function AdminDashboard({ triggerToast }: AdminDashboardProps) {
       {/* Edit License terms Pop-Up Modal */}
       {editModalOpen && selectedBarber && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-fade-in">
-          <div className="bg-bg-dark-800 border border-border-dark w-full max-w-md rounded-2xl overflow-hidden shadow-2xl relative animate-scale-up select-none">
-            <div className="px-5 py-4 border-b border-border-dark flex justify-between items-center bg-bg-dark-850">
+          <div className="bg-bg-dark-800 border border-border-dark w-full max-w-md rounded-2xl overflow-hidden shadow-2xl relative animate-scale-up select-none flex flex-col max-h-[90vh]">
+            <div className="px-5 py-4 border-b border-border-dark flex justify-between items-center bg-bg-dark-850 shrink-0">
               <h3 className="font-display font-medium text-base text-text-primary flex items-center gap-2">
                 📂 Termos Corporativos: {selectedBarber.name}
               </h3>
@@ -422,7 +433,7 @@ export default function AdminDashboard({ triggerToast }: AdminDashboardProps) {
               </button>
             </div>
 
-            <form onSubmit={handleSaveLicenseSettings} className="p-5.5 space-y-4">
+            <form onSubmit={handleSaveLicenseSettings} className="p-5.5 space-y-4 overflow-y-auto flex-1 min-h-0">
               <div className="bg-bg-dark-900 border border-border-dark rounded-xl p-3 flex items-center gap-3">
                 <div className="w-9 h-9 rounded-full bg-brand-amber-bg border border-brand-amber-border flex items-center justify-center font-bold text-brand-amber text-xs font-sans shrink-0">
                   {initials(selectedBarber.name)}
@@ -476,7 +487,7 @@ export default function AdminDashboard({ triggerToast }: AdminDashboardProps) {
                   <input
                     type="number"
                     min="1"
-                    max="28"
+                    max="31"
                     required
                     value={lDueDay}
                     onChange={(e) => setLDueDay(parseInt(e.target.value) || 1)}
@@ -513,6 +524,67 @@ export default function AdminDashboard({ triggerToast }: AdminDashboardProps) {
                     <option value={36}>36 meses (3 anos)</option>
                   </select>
                 </div>
+              </div>
+
+              {/* Feature Flags / Subscription permissions */}
+              <div className="bg-bg-dark-950 p-4 rounded-xl border border-border-dark space-y-3.5">
+                <span className="text-xs font-bold text-brand-amber block uppercase tracking-wider">
+                  Recursos do Plano / Assinatura
+                </span>
+                
+                {/* Pausado temporariamente conforme solicitação do usuário */}
+                {false && (
+                  <label className="flex items-start gap-3 cursor-pointer select-none group">
+                    <input
+                      type="checkbox"
+                      checked={fPix}
+                      onChange={(e) => setFPix(e.target.checked)}
+                      className="w-4 h-4 mt-0.5 rounded border-border-dark text-brand-amber focus:ring-brand-amber bg-bg-dark-900 cursor-pointer accent-brand-amber"
+                    />
+                    <div className="flex flex-col">
+                      <span className="text-xs font-semibold text-text-primary group-hover:text-white transition-colors">
+                        Função Pix Automático (Mercado Pago)
+                      </span>
+                      <span className="text-[10px] text-text-muted">
+                        Permitir que clientes paguem direto no agendamento.
+                      </span>
+                    </div>
+                  </label>
+                )}
+
+                <label className="flex items-start gap-3 cursor-pointer select-none group">
+                  <input
+                    type="checkbox"
+                    checked={fAlerts}
+                    onChange={(e) => setFAlerts(e.target.checked)}
+                    className="w-4 h-4 mt-0.5 rounded border-border-dark text-brand-amber focus:ring-brand-amber bg-bg-dark-900 cursor-pointer accent-brand-amber"
+                  />
+                  <div className="flex flex-col">
+                    <span className="text-xs font-semibold text-text-primary group-hover:text-white transition-colors">
+                      Avisos de Mensagem (WhatsApp / Alertas)
+                    </span>
+                    <span className="text-[10px] text-text-muted">
+                      Liberar aba de avisos de atrasados e mensagens automáticas.
+                    </span>
+                  </div>
+                </label>
+
+                <label className="flex items-start gap-3 cursor-pointer select-none group">
+                  <input
+                    type="checkbox"
+                    checked={fEmployees}
+                    onChange={(e) => setFEmployees(e.target.checked)}
+                    className="w-4 h-4 mt-0.5 rounded border-border-dark text-brand-amber focus:ring-brand-amber bg-bg-dark-900 cursor-pointer accent-brand-amber"
+                  />
+                  <div className="flex flex-col">
+                    <span className="text-xs font-semibold text-text-primary group-hover:text-white transition-colors">
+                      Cadastro de Equipe / Barbeiros
+                    </span>
+                    <span className="text-[10px] text-text-muted">
+                      Permitir que a barbearia cadastre colaboradores e funcionários.
+                    </span>
+                  </div>
+                </label>
               </div>
 
               {/* Internal Notes */}

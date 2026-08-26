@@ -2,7 +2,7 @@ import React from 'react';
 import { motion } from 'motion/react';
 import { ArrowLeft, Edit3, Plus, CreditCard, Scissors, Trash2, HelpCircle, AlertCircle, CheckCircle, Check } from 'lucide-react';
 import { Client, Cut } from '../types';
-import { fmtDate, fmtMoney, initials } from '../utils';
+import { fmtDate, fmtMoney, initials, getAdjustedDueDay } from '../utils';
 
 interface ClientDetailProps {
   clientId: string;
@@ -14,6 +14,7 @@ interface ClientDetailProps {
   onRemoveCut: (cutId: string) => void;
   onToggleStatus: (clientId: string, currentStatus: 'ok' | 'atrasado') => void;
   onToggleChecklistItem: (clientId: string, itemId: string, done: boolean) => void;
+  barberProfile?: any;
 }
 
 export default function ClientDetail({
@@ -26,6 +27,7 @@ export default function ClientDetail({
   onRemoveCut,
   onToggleStatus,
   onToggleChecklistItem,
+  barberProfile
 }: ClientDetailProps) {
   const client = clients.find(c => c.id === clientId);
 
@@ -220,17 +222,26 @@ export default function ClientDetail({
               <div className="grid grid-cols-2 gap-4">
                 <div className="flex flex-col gap-1.5">
                   <span className="text-[10px] text-text-muted uppercase tracking-wider font-semibold">Pacote</span>
-                  <span className="text-xs md:text-sm font-bold text-text-primary px-3 py-1 rounded-lg bg-brand-amber-bg border border-brand-amber-border/50 w-max">
-                    {client.package}
+                  <span className="text-xs md:text-sm font-bold text-text-primary px-3 py-1 rounded-lg bg-brand-amber-bg border border-brand-amber-border/50 w-max truncate max-w-full">
+                    {(() => {
+                      const pId = client.package;
+                      if (barberProfile?.plans?.[pId]?.name) {
+                        return barberProfile.plans[pId].name;
+                      }
+                      if (pId === 'Básico') return 'Plano Essencial';
+                      if (pId === 'Premium') return 'Plano Cavalheiro';
+                      if (pId === 'VIP') return 'Plano Executivo';
+                      return pId;
+                    })()}
                   </span>
                 </div>
                 <div className="flex flex-col gap-1.5">
                   <span className="text-[10px] text-text-muted uppercase tracking-wider font-semibold">Valor Mensal</span>
                   <span className="text-sm md:text-base font-bold text-text-primary">{fmtMoney(client.value)}</span>
                 </div>
-                <div className="flex flex-col gap-1.5">
+                <div className="flex flex-col gap-1.5" title={getAdjustedDueDay(client.due).isAdjusted ? `Ajustado do dia original ${client.due} pois este mês é mais curto` : undefined}>
                   <span className="text-[10px] text-text-muted uppercase tracking-wider font-semibold">Dia Vencimento</span>
-                  <span className="text-sm md:text-base font-semibold text-text-primary">Dia {client.due}</span>
+                  <span className="text-sm md:text-base font-semibold text-text-primary">Dia {getAdjustedDueDay(client.due).day}{getAdjustedDueDay(client.due).isAdjusted ? '*' : ''}</span>
                 </div>
                 <div className="flex flex-col gap-1.5">
                   <span className="text-[10px] text-text-muted uppercase tracking-wider font-semibold">Último pagamento</span>
