@@ -55,9 +55,20 @@ async function sendDirectFromBrowser(
     let body: any = {};
 
     if (provider === 'wapi') {
-      url = customUrl || `https://api.w-api.app/v1/instances/${instanceId}/send-text`;
-      headers['Authorization'] = `Bearer ${token}`;
-      body = { phone: cleanPhone, message: messageText };
+      if (customUrl) {
+        url = customUrl.includes('instanceId=') 
+          ? customUrl 
+          : `${customUrl.replace(/\/$/, '')}/v1/message/send-text?instanceId=${instanceId}`;
+      } else {
+        url = `https://api.w-api.app/v1/message/send-text?instanceId=${instanceId}`;
+      }
+      headers['Authorization'] = token.startsWith('Bearer ') ? token : `Bearer ${token}`;
+      headers['instanceId'] = instanceId;
+      body = { 
+        phone: cleanPhone, 
+        message: messageText,
+        instanceId: instanceId
+      };
     } else if (provider === 'zapi') {
       url = customUrl || `https://api.z-api.io/instances/${instanceId}/token/${token}/send-text`;
       headers['Client-Token'] = token;

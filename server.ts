@@ -343,13 +343,13 @@ const handleWhatsAppSend = async (req: express.Request, res: express.Response) =
         if (cleanCustomUrl) {
           if (cleanCustomUrl.endsWith("/send-text") || cleanCustomUrl.endsWith("/send-message")) {
             endpoint = cleanCustomUrl;
-          } else if (cleanCustomUrl.includes("/instances/")) {
-            endpoint = `${cleanCustomUrl}/send-text`;
+          } else if (cleanCustomUrl.includes("instanceId=")) {
+            endpoint = cleanCustomUrl;
           } else {
-            endpoint = `${cleanCustomUrl}/v1/instances/${cleanInstanceId}/send-text`;
+            endpoint = `${cleanCustomUrl}/v1/message/send-text?instanceId=${cleanInstanceId}`;
           }
         } else if (cleanInstanceId) {
-          endpoint = `https://api.w-api.app/v1/instances/${cleanInstanceId}/send-text`;
+          endpoint = `https://api.w-api.app/v1/message/send-text?instanceId=${cleanInstanceId}`;
         } else {
           endpoint = `https://api.w-api.app/v1/message/send-text`;
         }
@@ -367,14 +367,13 @@ const handleWhatsAppSend = async (req: express.Request, res: express.Response) =
           headers["instance"] = cleanInstanceId;
         }
         payload = {
+          phone: formattedPhone,
+          message: messageText,
           instanceId: cleanInstanceId,
           instance_id: cleanInstanceId,
-          instance: cleanInstanceId,
           chatId: formattedPhone.includes("@") ? formattedPhone : `${formattedPhone}@c.us`,
-          phone: formattedPhone,
           number: formattedPhone,
           to: formattedPhone,
-          message: messageText,
           text: messageText,
           body: messageText
         };
