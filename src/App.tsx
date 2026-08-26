@@ -19,8 +19,9 @@ import {
   getDocs
 } from 'firebase/firestore';
 import { auth, db, handleFirestoreError, OperationType } from './firebase';
-import { Client, Cut, Service } from './types';
+import { Client, Cut, Service, WhatsAppConfig } from './types';
 import { seedDatabaseIfEmpty, todayDate, initials, getDefaultChecklist } from './utils';
+import { sendWhatsAppApiMessage, createDispatchLog } from './services/whatsappAutomation';
 
 // Icons
 import { 
@@ -426,6 +427,126 @@ export default function App() {
 
     return () => unsubscribers.forEach(unsub => unsub());
   }, [user?.uid, clients.map(c => c.id).join(',')]);
+
+  // 5. Global Background WhatsApp Reminder Worker for logged-in Barber
+  useEffect(() => {
+    if (!user || user.role !== 'barber') return;
+
+    const waConfig: WhatsAppConfig | undefined = barberProfile?.whatsappConfig || (barberProfile as any)?.scheduleSettings?.whatsappConfig;
+    if (!waConfig || !waConfig.enabled || !waConfig.autoRemindersEnabled || waConfig.provider === 'wa_link' || !waConfig.instanceId || !waConfig.token) {
+      return;
+    }
+
+    const todayStr = todayDate();
+    const qBookings = query(
+      collection(db, 'guest_bookings'),
+      where('barbeariaId', '==', user.uid),
+      where('date', '==', todayStr)
+    );
+
+    let activeBookings: any[] = [];
+    const unsubscribe = onSnapshot(qBookings, (snap) => {
+      const list: any[] = [];
+      snap.forEach(d => {
+        list.push({ id: d.id, ...d.data() });
+      });
+      activeBookings = list;
+    }, (err) => {
+      console.warn('Background bookings monitor notice:', err);
+    });
+
+    const localSentSet = new Set<string>();
+    const cacheKey = `wa_reminders_sent_${user.uid}_${todayStr}`;
+    try {
+      const saved = localStorage.getItem(cacheKey);
+      if (saved) {
+        JSON.parse(saved).forEach((k: string) => localSentSet.add(k));
+      }
+    } catch (_) {}
+
+    const checkAndSendReminders = async () => {
+      if (!activeBookings || activeBookings.length === 0) return;
+      const now = new Date();
+      const targetHoursBefore = Number(waConfig.reminderHoursBefore) || 1.5;
+      const targetWindowMinutes = targetHoursBefore * 60;
+
+      for (const b of activeBookings) {
+        if (!b.time || !b.clientPhone) continue;
+        if (b.reminderSent) {
+          localSentSet.add(b.id);
+          continue;
+        }
+
+        const phoneKey = `${b.clientPhone.replace(/\D/g, '')}_${b.time}`;
+        if (localSentSet.has(b.id) || localSentSet.has(phoneKey)) continue;
+
+        const timeParts = b.time.split(':');
+        const bHours = parseInt(timeParts[0], 10);
+        const bMins = parseInt(timeParts[1], 10);
+        if (isNaN(bHours) || isNaN(bMins)) continue;
+
+        const bookingTime = new Date();
+        bookingTime.setHours(bHours, bMins, 0, 0);
+
+        const diffMinutes = (bookingTime.getTime() - now.getTime()) / (1000 * 60);
+
+        if (diffMinutes <= 0) {
+          localSentSet.add(b.id);
+          localSentSet.add(phoneKey);
+          continue;
+        }
+
+        if (diffMinutes > 0 && diffMinutes <= targetWindowMinutes) {
+          localSentSet.add(b.id);
+          localSentSet.add(phoneKey);
+          try {
+            localStorage.setItem(cacheKey, JSON.stringify(Array.from(localSentSet)));
+          } catch (_) {}
+
+          const windowLabel = targetHoursBefore === 1.5 ? '1h30min' : `${targetHoursBefore}h`;
+          const salonName = barberProfile?.name || user?.displayName || 'Nossa Barbearia';
+          const firstName = (b.clientName || '').trim().split(/\s+/)[0] || b.clientName;
+          const serviceText = b.serviceName ? ` (${b.serviceName})` : '';
+          const text = `Olá, *${firstName}*! Passando para lembrar do seu atendimento na *${salonName}* agendado para hoje às *${b.time}*${serviceText}.\n\nFaltam aproximadamente *${windowLabel}* para o seu horário! Te aguardamos. ✂️`;
+
+          const res = await sendWhatsAppApiMessage(waConfig, b.clientPhone, text);
+          if (res.success) {
+            try {
+              await updateDoc(doc(db, 'guest_bookings', b.id), {
+                reminderSent: true,
+                reminderSentAt: new Date().toISOString()
+              });
+            } catch (_) {}
+
+            triggerToast(`🤖 Lembrete automático enviado para ${b.clientName}!`);
+
+            try {
+              const newLog = createDispatchLog(
+                'reminder',
+                b.clientName,
+                b.clientPhone,
+                'success',
+                text
+              );
+              const bDocRef = doc(db, 'barbers', user.uid);
+              const updatedLogs = [newLog, ...(waConfig.logs || [])].slice(0, 50);
+              await updateDoc(bDocRef, {
+                'whatsappConfig.logs': updatedLogs
+              });
+            } catch (_) {}
+          }
+        }
+      }
+    };
+
+    checkAndSendReminders();
+    const interval = setInterval(checkAndSendReminders, 30000);
+
+    return () => {
+      unsubscribe();
+      clearInterval(interval);
+    };
+  }, [user?.uid, user?.role, barberProfile?.whatsappConfig, barberProfile?.name]);
 
   // Compile aggregate lists of all cuts for overall metrics
   const allCuts: Cut[] = Object.values(rawCutsMap).flat() as Cut[];

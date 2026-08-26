@@ -8,11 +8,13 @@ import {
   where,
   getDocs,
   doc,
-  deleteDoc
+  deleteDoc,
+  updateDoc
 } from 'firebase/firestore';
 import { db } from '../firebase';
-import { Barber, Service } from '../types';
+import { Barber, Service, WhatsAppConfig } from '../types';
 import { initials, consolidateServicesList } from '../utils';
+import { sendWhatsAppApiMessage, createDispatchLog } from '../services/whatsappAutomation';
 import SupportChat from './SupportChat';
 import { 
   Scissors, 
@@ -185,6 +187,9 @@ export default function SimpleBooking({ onClose, barbeariaId }: SimpleBookingPro
             setFinishedDetails(responseDetails);
             setPayingState('approved');
             setBookingFinished(true);
+
+            // Dispara confirmação automática via API do WhatsApp em segundo plano
+            dispatchAutomatedWhatsAppConfirmation(responseDetails);
           } else if (data.status === 'rejected' || data.status === 'cancelled') {
             clearInterval(statusPoll);
             clearInterval(timer);
@@ -628,6 +633,67 @@ export default function SimpleBooking({ onClose, barbeariaId }: SimpleBookingPro
     return `https://api.whatsapp.com/send?phone=${cleanPhone}&text=${text}`;
   };
 
+  const dispatchAutomatedWhatsAppConfirmation = async (details: any) => {
+    try {
+      const waConfig: WhatsAppConfig | undefined = barbeariaInfo?.whatsappConfig || barbeariaInfo?.scheduleSettings?.whatsappConfig;
+      if (!waConfig || !waConfig.enabled || waConfig.provider === 'wa_link') {
+        return;
+      }
+
+      const salonName = barbeariaInfo?.name || details.barberName || 'Barbearia';
+      const dateFormatted = details.date.split('-').reverse().join('/');
+      const firstName = (details.clientName || '').trim().split(/\s+/)[0] || details.clientName;
+      const cancelUrl = `${window.location.origin}${window.location.pathname}?barbearia=${details.barbeariaId || barbeariaId || ''}&consultar=true&tel=${encodeURIComponent(details.clientPhone)}`;
+
+      const clientMsg = `💈 *AGENDAMENTO CONFIRMADO!*\n\n` +
+        `Olá, *${firstName}*! Seu horário na *${salonName}* foi agendado com sucesso:\n\n` +
+        `✂️ *Serviço:* ${details.serviceName} - R$ ${details.serviceValue.toFixed(2).replace('.', ',')}\n` +
+        `💇🏽‍♂️ *Profissional:* ${details.barberName}\n` +
+        `📆 *Data:* ${dateFormatted}\n` +
+        `⏰ *Horário:* ${details.time}\n` +
+        `💳 *Pagamento:* ${details.paymentMethod === 'mercado_pago_pix' ? 'Pago via Pix ✅' : 'No Estabelecimento'}\n\n` +
+        `🔗 *Ver ou Gerenciar seu Horário:*\n👉 ${cancelUrl}\n\n` +
+        `Te aguardamos! Qualquer dúvida, estamos à disposição. 🚀`;
+
+      // 1. Send automatic WhatsApp to customer
+      const clientRes = await sendWhatsAppApiMessage(waConfig, details.clientPhone, clientMsg);
+
+      // Log in barbers collection in Firestore
+      const targetBarberId = details.barbeariaId || barbeariaId;
+      if (targetBarberId) {
+        try {
+          const logEntry = createDispatchLog(
+            'reminder',
+            details.clientName,
+            details.clientPhone,
+            clientRes.success ? 'success' : 'error',
+            clientMsg,
+            clientRes.error
+          );
+          const bDocRef = doc(db, 'barbers', targetBarberId);
+          const currentLogs = waConfig.logs || [];
+          await updateDoc(bDocRef, {
+            'whatsappConfig.logs': [logEntry, ...currentLogs].slice(0, 50)
+          });
+        } catch (_) {}
+      }
+
+      // 2. Also notify the barber if different phone
+      const barberPhone = details.barberPhone || barbeariaInfo?.phone;
+      if (barberPhone && barberPhone.replace(/\D/g, '') !== details.clientPhone.replace(/\D/g, '')) {
+        const barberMsg = `🔔 *NOVO AGENDAMENTO RECEBIDO!*\n\n` +
+          `Cliente: *${details.clientName}* (${details.clientPhone})\n` +
+          `Serviço: *${details.serviceName}*\n` +
+          `Data: *${dateFormatted} às ${details.time}*\n` +
+          `Profissional: *${details.barberName}*\n` +
+          `Pagamento: ${details.paymentMethod === 'mercado_pago_pix' ? 'Pix Confirmado ✅' : 'No Local'}`;
+        await sendWhatsAppApiMessage(waConfig, barberPhone, barberMsg);
+      }
+    } catch (err) {
+      console.error('Error dispatching automated WhatsApp confirmation:', err);
+    }
+  };
+
   const handleCreateBooking = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedBarber || !selectedService || !selectedDate || !selectedTime || !clientName.trim() || !clientPhone.trim()) {
@@ -691,6 +757,9 @@ export default function SimpleBooking({ onClose, barbeariaId }: SimpleBookingPro
 
       setFinishedDetails(responseDetails);
       setBookingFinished(true);
+
+      // Dispara envio automático via API do WhatsApp em segundo plano
+      dispatchAutomatedWhatsAppConfirmation(responseDetails);
     } catch (err: any) {
       console.error('Error reserving guest slot:', err);
       setPayingState('idle');
@@ -797,16 +866,19 @@ export default function SimpleBooking({ onClose, barbeariaId }: SimpleBookingPro
     }
   };
 
-  // Automatic redirect to WhatsApp on booking completion
+  // Automatic redirect to WhatsApp on booking completion (only for manual wa_link)
   useEffect(() => {
     if (bookingFinished && finishedDetails && !hasAutoRedirected) {
       setHasAutoRedirected(true);
-      const timeout = setTimeout(() => {
-        handleSendWhatsApp(true);
-      }, 1500); // Give 1.5 seconds to see confirmation details before opening WhatsApp
-      return () => clearTimeout(timeout);
+      const waConfig: WhatsAppConfig | undefined = barbeariaInfo?.whatsappConfig || barbeariaInfo?.scheduleSettings?.whatsappConfig;
+      if (waConfig?.provider === 'wa_link') {
+        const timeout = setTimeout(() => {
+          handleSendWhatsApp(true);
+        }, 1500);
+        return () => clearTimeout(timeout);
+      }
     }
-  }, [bookingFinished, finishedDetails, hasAutoRedirected]);
+  }, [bookingFinished, finishedDetails, hasAutoRedirected, barbeariaInfo]);
 
   if (loading) {
     return (
@@ -843,44 +915,70 @@ export default function SimpleBooking({ onClose, barbeariaId }: SimpleBookingPro
             </p>
           </div>
 
-          {/* URGENT WARNING BANNER ABOUT COMPROVANTE & AUTOMATIC CANCELLATION */}
-          <div className="w-full bg-gradient-to-br from-red-950/90 via-amber-950/80 to-red-950/90 border-2 border-red-500/80 rounded-2xl p-4 shadow-2xl flex flex-col items-center text-center space-y-3 relative overflow-hidden">
-            <div className="absolute -right-6 -bottom-6 w-24 h-24 bg-red-500/10 rounded-full blur-xl pointer-events-none"></div>
+          {/* Dynamic WhatsApp Status / Warning Banner */}
+          {(() => {
+            const waConfig: WhatsAppConfig | undefined = barbeariaInfo?.whatsappConfig || barbeariaInfo?.scheduleSettings?.whatsappConfig;
+            const isApiActive = waConfig?.enabled && waConfig?.provider !== 'wa_link';
 
-            <div className="flex items-center gap-2 bg-red-500/25 px-3 py-1.5 rounded-full border border-red-500/50 shadow-sm">
-              <AlertTriangle className="w-4 h-4 text-amber-400 animate-bounce shrink-0" />
-              <span className="text-[11px] font-black uppercase text-amber-300 tracking-wider">
-                ⚠️ AVISO OBRIGATÓRIO DE CONFIRMAÇÃO
-              </span>
-            </div>
+            if (isApiActive) {
+              return (
+                <div className="w-full bg-gradient-to-br from-emerald-950/90 via-bg-dark-800 to-emerald-950/90 border border-emerald-500/50 rounded-2xl p-4 shadow-xl flex flex-col items-center text-center space-y-2.5">
+                  <div className="flex items-center gap-2 bg-emerald-500/20 px-3 py-1.5 rounded-full border border-emerald-500/40">
+                    <CheckCircle className="w-4 h-4 text-emerald-400 shrink-0" />
+                    <span className="text-[11px] font-black uppercase text-emerald-300 tracking-wider">
+                      CONFIRMAÇÃO AUTOMÁTICA ENVIADA
+                    </span>
+                  </div>
+                  <p className="text-xs text-emerald-100 font-medium leading-relaxed">
+                    Disparamos uma mensagem automática com o comprovante e detalhes do atendimento diretamente para o seu WhatsApp (<strong>{finishedDetails.clientPhone}</strong>).
+                  </p>
+                </div>
+              );
+            }
 
-            <p className="text-xs sm:text-sm font-extrabold text-white leading-relaxed">
-              O seu horário <span className="text-amber-300 underline decoration-red-500 decoration-2 underline-offset-4 uppercase">SÓ SERÁ RESERVADO</span> após o envio do comprovante no WhatsApp do barbeiro!
-            </p>
+            return (
+              <>
+                {/* URGENT WARNING BANNER ABOUT COMPROVANTE & AUTOMATIC CANCELLATION */}
+                <div className="w-full bg-gradient-to-br from-red-950/90 via-amber-950/80 to-red-950/90 border-2 border-red-500/80 rounded-2xl p-4 shadow-2xl flex flex-col items-center text-center space-y-3 relative overflow-hidden">
+                  <div className="absolute -right-6 -bottom-6 w-24 h-24 bg-red-500/10 rounded-full blur-xl pointer-events-none"></div>
 
-            <div className="bg-black/60 border border-red-500/40 rounded-xl p-3 text-[11px] text-amber-100 font-semibold leading-normal w-full space-y-1">
-              <div className="text-red-400 font-black text-xs uppercase flex items-center justify-center gap-1">
-                <span>🚨 CASO NÃO ENVIE O COMPROVANTE:</span>
-              </div>
-              <p className="text-text-primary text-[11px]">
-                Seu horário <strong className="text-red-400 underline uppercase">será cancelado automaticamente</strong> e disponibilizado para outro cliente.
-              </p>
-            </div>
-          </div>
+                  <div className="flex items-center gap-2 bg-red-500/25 px-3 py-1.5 rounded-full border border-red-500/50 shadow-sm">
+                    <AlertTriangle className="w-4 h-4 text-amber-400 animate-bounce shrink-0" />
+                    <span className="text-[11px] font-black uppercase text-amber-300 tracking-wider">
+                      ⚠️ AVISO OBRIGATÓRIO DE CONFIRMAÇÃO
+                    </span>
+                  </div>
 
-          {/* WhatsApp redirect notice */}
-          <div className="w-full bg-emerald-950/30 border border-emerald-500/30 rounded-xl p-3 flex flex-col items-center space-y-1">
-            <div className="flex items-center gap-1.5">
-              <span className="relative flex h-2.5 w-2.5">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
-              </span>
-              <span className="text-xs font-bold text-emerald-400">Redirecionando para o WhatsApp...</span>
-            </div>
-            <p className="text-[10px] text-text-muted text-center leading-normal">
-              O WhatsApp será aberto para você enviar o comprovante ao barbeiro. Se não abrir, clique no botão verde abaixo!
-            </p>
-          </div>
+                  <p className="text-xs sm:text-sm font-extrabold text-white leading-relaxed">
+                    O seu horário <span className="text-amber-300 underline decoration-red-500 decoration-2 underline-offset-4 uppercase">SÓ SERÁ RESERVADO</span> após o envio do comprovante no WhatsApp do barbeiro!
+                  </p>
+
+                  <div className="bg-black/60 border border-red-500/40 rounded-xl p-3 text-[11px] text-amber-100 font-semibold leading-normal w-full space-y-1">
+                    <div className="text-red-400 font-black text-xs uppercase flex items-center justify-center gap-1">
+                      <span>🚨 CASO NÃO ENVIE O COMPROVANTE:</span>
+                    </div>
+                    <p className="text-text-primary text-[11px]">
+                      Seu horário <strong className="text-red-400 underline uppercase">será cancelado automaticamente</strong> e disponibilizado para outro cliente.
+                    </p>
+                  </div>
+                </div>
+
+                {/* WhatsApp redirect notice */}
+                <div className="w-full bg-emerald-950/30 border border-emerald-500/30 rounded-xl p-3 flex flex-col items-center space-y-1">
+                  <div className="flex items-center gap-1.5">
+                    <span className="relative flex h-2.5 w-2.5">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
+                    </span>
+                    <span className="text-xs font-bold text-emerald-400">Redirecionando para o WhatsApp...</span>
+                  </div>
+                  <p className="text-[10px] text-text-muted text-center leading-normal">
+                    O WhatsApp será aberto para você enviar o comprovante ao barbeiro. Se não abrir, clique no botão verde abaixo!
+                  </p>
+                </div>
+              </>
+            );
+          })()}
 
           {/* Ticket Information card */}
           <div className="w-full bg-bg-dark-900/65 rounded-xl border border-border-dark p-4.5 text-left text-xs space-y-3 font-mono">
