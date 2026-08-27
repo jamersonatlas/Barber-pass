@@ -814,7 +814,7 @@ export default function WhatsAppAutomation({ user, clients, triggerToast, barber
                   <span className="text-[10px] text-brand-amber/90 font-medium">
                     {whatsappConfig.provider === 'evolution' && 'Ex: https://sua-evolution.com.br'}
                     {whatsappConfig.provider === 'zapi' && 'Ex: https://api.z-api.io/instances/SUA_INSTANCIA/token/SEU_TOKEN/send-text'}
-                    {whatsappConfig.provider === 'wapi' && 'Ex: https://api.w-api.app/v1/instances/SUA_INSTANCIA/send-text'}
+                    {whatsappConfig.provider === 'wapi' && 'Padrão Oficial: https://api.w-api.app/v1/message/send-text (Deixe em branco)'}
                     {whatsappConfig.provider === 'custom' && 'Ex: https://n8n.seu-dominio.com/webhook/enviar-whatsapp'}
                   </span>
                 </div>

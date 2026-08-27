@@ -340,10 +340,8 @@ const handleWhatsAppSend = async (req: express.Request, res: express.Response) =
         break;
 
       case "wapi":
-        if (cleanCustomUrl) {
-          if (cleanCustomUrl.endsWith("/send-text") || cleanCustomUrl.endsWith("/send-message")) {
-            endpoint = cleanCustomUrl;
-          } else if (cleanCustomUrl.includes("instanceId=")) {
+        if (cleanCustomUrl && !cleanCustomUrl.includes("w-api.app")) {
+          if (cleanCustomUrl.includes("instanceId=")) {
             endpoint = cleanCustomUrl;
           } else {
             endpoint = `${cleanCustomUrl}/v1/message/send-text?instanceId=${cleanInstanceId}`;

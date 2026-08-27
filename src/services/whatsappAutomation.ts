@@ -55,7 +55,7 @@ async function sendDirectFromBrowser(
     let body: any = {};
 
     if (provider === 'wapi') {
-      if (customUrl) {
+      if (customUrl && !customUrl.includes('w-api.app')) {
         url = customUrl.includes('instanceId=') 
           ? customUrl 
           : `${customUrl.replace(/\/$/, '')}/v1/message/send-text?instanceId=${instanceId}`;

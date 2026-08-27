@@ -65,8 +65,8 @@ export default async function handler(req, res) {
         break;
 
       case "wapi":
-        if (cleanCustomUrl) {
-          if (cleanCustomUrl.endsWith("/send-text") || cleanCustomUrl.endsWith("/send-message") || cleanCustomUrl.includes("instanceId=")) {
+        if (cleanCustomUrl && !cleanCustomUrl.includes("w-api.app")) {
+          if (cleanCustomUrl.includes("instanceId=")) {
             endpoint = cleanCustomUrl;
           } else {
             endpoint = `${cleanCustomUrl}/v1/message/send-text?instanceId=${cleanInstanceId}`;
