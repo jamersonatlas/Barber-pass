@@ -55,7 +55,7 @@ async function sendDirectFromBrowser(
     let body: any = {};
 
     if (provider === 'wapi') {
-      if (customUrl && !customUrl.includes('w-api.app')) {
+      if (customUrl && !customUrl.includes('w-api.app') && !customUrl.includes('/instances/')) {
         url = customUrl.includes('instanceId=') 
           ? customUrl 
           : `${customUrl.replace(/\/$/, '')}/v1/message/send-text?instanceId=${instanceId}`;
@@ -63,7 +63,6 @@ async function sendDirectFromBrowser(
         url = `https://api.w-api.app/v1/message/send-text?instanceId=${instanceId}`;
       }
       headers['Authorization'] = token.startsWith('Bearer ') ? token : `Bearer ${token}`;
-      headers['instanceId'] = instanceId;
       body = { 
         phone: cleanPhone, 
         message: messageText,
@@ -152,6 +151,30 @@ export async function sendWhatsAppApiMessage(
   const instanceId = (config.instanceId || '').trim();
   const token = (config.token || '').trim();
   const customUrl = (config.apiUrl || '').trim();
+
+  // Check if user accidentally kept example placeholder text
+  if (
+    instanceId.toUpperCase() === 'SEU_ID' ||
+    instanceId.toUpperCase() === 'SUA_INSTANCIA' ||
+    instanceId.includes('SEU_') ||
+    instanceId.includes('SUA_')
+  ) {
+    return {
+      success: false,
+      error: `O "ID da Instância" está preenchido com o texto de exemplo "${instanceId}". Substitua pelo ID real gerado no seu painel W-API (ex: LITE-5B1UDU-5KP20J).`
+    };
+  }
+
+  if (
+    token.toUpperCase() === 'SEU_TOKEN' ||
+    token.toUpperCase() === 'SEU_BEARER_TOKEN' ||
+    token.includes('SEU_TOKEN')
+  ) {
+    return {
+      success: false,
+      error: `O "Token da API" está com o texto de exemplo "${token}". Substitua pelo Token Secreto real gerado no painel da sua API.`
+    };
+  }
 
   // If using wa_link provider (Free 1-Click WhatsApp Web)
   if (provider === 'wa_link') {

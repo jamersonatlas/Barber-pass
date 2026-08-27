@@ -103,12 +103,15 @@ export default function WhatsAppAutomation({ user, clients, triggerToast, barber
                 cleanApiUrl = parsed.url || parsed.apiUrl || '';
               } catch (_) {}
             }
+            if (loadedProvider === 'wapi' && (cleanApiUrl.includes('w-api.app') || cleanApiUrl.includes('/instances/'))) {
+              cleanApiUrl = '';
+            }
 
             const mergedConfig: WhatsAppConfig = {
               enabled: wa.enabled !== false,
               provider: loadedProvider,
-              instanceId: cleanInstance,
-              token: wa.token || '',
+              instanceId: cleanInstance === 'SEU_ID' ? '' : cleanInstance,
+              token: wa.token === 'SEU_TOKEN' ? '' : (wa.token || ''),
               apiUrl: cleanApiUrl,
               autoRemindersEnabled: wa.autoRemindersEnabled !== false,
               autoBillingEnabled: wa.autoBillingEnabled !== false,
@@ -771,17 +774,26 @@ export default function WhatsAppAutomation({ user, clients, triggerToast, barber
                     }
                     setWhatsappConfig(prev => ({ ...prev, instanceId: val }));
                   }}
-                  className="w-full bg-bg-dark-900 border border-border-dark text-text-primary text-xs rounded-xl p-3 focus:outline-none focus:border-brand-amber placeholder:text-text-muted/40 font-mono"
+                  className={`w-full bg-bg-dark-900 border ${
+                    whatsappConfig.instanceId.toUpperCase().includes('SEU_') || whatsappConfig.instanceId.toUpperCase().includes('SUA_')
+                      ? 'border-red-500 text-red-300'
+                      : 'border-border-dark text-text-primary'
+                  } text-xs rounded-xl p-3 focus:outline-none focus:border-brand-amber placeholder:text-text-muted/40 font-mono`}
                 />
+                {(whatsappConfig.instanceId.toUpperCase().includes('SEU_') || whatsappConfig.instanceId.toUpperCase().includes('SUA_')) && (
+                  <p className="text-[11px] font-bold text-red-400 flex items-center gap-1 mt-1">
+                    ⚠️ Atenção: O campo contém o texto de exemplo "{whatsappConfig.instanceId}". Apague e coloque o código real da sua instância W-API (ex: LITE-XXXXXX).
+                  </p>
+                )}
                 {whatsappConfig.provider === 'wapi' && (
                   <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-3 text-xs space-y-1.5 text-amber-200/90 mt-2">
                     <p className="font-bold text-amber-300 flex items-center gap-1.5">
                       📌 Como preencher com base no seu painel W-API:
                     </p>
                     <ul className="list-disc list-inside space-y-1 text-[11px] leading-relaxed pl-1">
-                      <li><strong>ID da Instância:</strong> Preencha com o código da instância (ex: <code className="bg-bg-dark-900 px-1 py-0.5 rounded text-amber-300">LITE-...</code>).</li>
+                      <li><strong>ID da Instância:</strong> Preencha com o código da instância gerado no W-API (ex: <code className="bg-bg-dark-900 px-1 py-0.5 rounded text-amber-300">LITE-5B1UDU-5KP20J</code>). Não use "SEU_ID".</li>
                       <li><strong>Token da API:</strong> Preencha com o token secreto gerado no seu painel W-API.</li>
-                      <li><strong>Se persistir erro HTTP 404:</strong> Copie a URL da rota de envio no menu "Documentação / Testar" do W-API e cole no campo <em>URL Customizada</em> abaixo.</li>
+                      <li><strong>URL Customizada:</strong> Deixe em branco (o sistema usará o endereço oficial automaticamente).</li>
                     </ul>
                   </div>
                 )}
